@@ -26,7 +26,10 @@
 	#define ssl_mutex_type pthread_mutex_t
 #endif
 
+#if defined(OPENSSL)
 #include <openssl/ssl.h>
+#endif
+
 #include "SocketBuffer.h"
 #include "Clients.h"
 

@@ -985,3 +985,636 @@ int SSLSocket_continueWrite(pending_writes* pw)
 	return rc;
 }
 #endif
+
+#if defined(MBEDTLS)
+
+#include "SocketBuffer.h"
+#include "MQTTClient.h"
+#include "MQTTProtocolOut.h"
+#include "SSLSocket.h"
+#include "Log.h"
+#include "StackTrace.h"
+#include "Socket.h"
+#include "Clients.h"
+
+#include "Heap.h"
+
+#include <string.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/platform.h>
+
+extern Sockets s;
+static ssl_mutex_type sslCoreMutex;
+
+static int SSL_create_mutex(ssl_mutex_type* mutex);
+static int SSL_lock_mutex(ssl_mutex_type* mutex);
+static int SSL_unlock_mutex(ssl_mutex_type* mutex);
+static void SSL_destroy_mutex(ssl_mutex_type* mutex);
+static int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
+static void SSLSocket_destroyContext(networkHandles* net);
+static void SSLSocket_addPendingRead(int sock);
+
+#if defined(WIN32) || defined(WIN64)
+#define iov_len len
+#define iov_base buf
+#endif
+
+
+#if !defined(ARRAY_SIZE)
+/**
+ * Macro to calculate the number of entries in an array
+ */
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
+#endif
+
+
+static int SSL_create_mutex(ssl_mutex_type* mutex)
+{
+    int rc = 0;
+
+    FUNC_ENTRY;
+#if defined(WIN32) || defined(WIN64)
+    *mutex = CreateMutex(NULL, 0, NULL);
+#else
+    rc = pthread_mutex_init(mutex, NULL);
+#endif
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+static int SSL_lock_mutex(ssl_mutex_type* mutex)
+{
+    int rc = -1;
+
+    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
+#if defined(WIN32) || defined(WIN64)
+    if (WaitForSingleObject(*mutex, INFINITE) != WAIT_FAILED)
+#else
+    if ((rc = pthread_mutex_lock(mutex)) == 0)
+#endif
+    rc = 0;
+
+    return rc;
+}
+
+static int SSL_unlock_mutex(ssl_mutex_type* mutex)
+{
+    int rc = -1;
+
+    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
+#if defined(WIN32) || defined(WIN64)
+    if (ReleaseMutex(*mutex) != 0)
+#else
+    if ((rc = pthread_mutex_unlock(mutex)) == 0)
+#endif
+    rc = 0;
+
+    return rc;
+}
+
+static void SSL_destroy_mutex(ssl_mutex_type* mutex)
+{
+    int rc = 0;
+
+    FUNC_ENTRY;
+#if defined(WIN32) || defined(WIN64)
+    rc = CloseHandle(*mutex);
+#else
+    rc = pthread_mutex_destroy(mutex);
+#endif
+    FUNC_EXIT_RC(rc);
+}
+
+/*
+ * custom verify on mbedtls, when ssl option verify is not set.
+ */
+static int SSL_verify_discard(void *data, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    char buf[512];
+    ((void) data);
+
+    if ((*flags) != 0) {
+        mbedtls_x509_crt_verify_info(buf, sizeof(buf), NULL, *flags);
+        Log(TRACE_PROTOCOL, 1,  "Warnning! flags:%d %s", *flags, buf);
+
+        /* Discard CN mismatch when ssl options verify unset */
+        if (*flags == MBEDTLS_X509_BADCERT_CN_MISMATCH) {
+            *flags = 0;
+        }
+    }
+
+    return (0);
+}
+
+void SSLSocket_handleOpensslInit(int bool_value)
+{
+    return;
+}
+
+
+int SSLSocket_initialize(void)
+{
+    int rc = 0;
+    FUNC_ENTRY;
+
+    SSL_create_mutex(&sslCoreMutex);
+
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+void SSLSocket_terminate(void)
+{
+    FUNC_ENTRY;
+
+    SSL_destroy_mutex(&sslCoreMutex);
+
+    FUNC_EXIT;
+}
+
+int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
+{
+    int rc = 0;
+    /* RNG related string */
+    const char personalization[] = "paho_mbedtls_entropy";
+
+    FUNC_ENTRY;
+
+    if (net->ctx == NULL)
+    {
+        net->ctx = (SSL_CTX*)malloc(sizeof(SSL_CTX));
+        if (net->ctx == NULL)
+        {
+            Log(TRACE_PROTOCOL, -1, "allocate context failed.");
+            goto exit;
+        }
+
+        /* initialise the mbedtls context */
+        mbedtls_ssl_config_init(&net->ctx->conf);
+        /* initialise RNG */
+        mbedtls_entropy_init(&net->ctx->entropy);
+        mbedtls_ctr_drbg_init(&net->ctx->ctr_drbg);
+        /* init certificates */
+        mbedtls_x509_crt_init(&net->ctx->cacert);
+        mbedtls_x509_crt_init(&net->ctx->clicert);
+        mbedtls_pk_init(&net->ctx->pkey);
+
+        if ((rc = mbedtls_ctr_drbg_seed(
+                &net->ctx->ctr_drbg, mbedtls_entropy_func,
+                &net->ctx->entropy, (const unsigned char*)personalization,
+                 sizeof(personalization))) != 0) {
+          Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_ctr_drbg_seed returned %d", rc);
+          goto free_ctx;
+        }
+
+        mbedtls_ssl_conf_rng(&net->ctx->conf, mbedtls_ctr_drbg_random,
+                             &net->ctx->ctr_drbg);
+
+        /* load default config */
+        rc = mbedtls_ssl_config_defaults(&net->ctx->conf,
+                MBEDTLS_SSL_IS_CLIENT,
+                MBEDTLS_SSL_TRANSPORT_STREAM,
+                MBEDTLS_SSL_PRESET_DEFAULT);
+
+        int sslVersion = MQTT_SSL_VERSION_DEFAULT;
+        if (opts->struct_version >= 1) sslVersion = opts->sslVersion;
+        switch (sslVersion)
+        {
+        case MQTT_SSL_VERSION_DEFAULT:
+            break;
+        case MQTT_SSL_VERSION_TLS_1_0:
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
+            break;
+        case MQTT_SSL_VERSION_TLS_1_1:
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_2);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_2);
+            break;
+        case MQTT_SSL_VERSION_TLS_1_2:
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+            break;
+        default:
+            break;
+        }
+
+    }
+
+    if (opts->keyStore && opts->privateKey)
+    {
+        /* parse client cert */
+        rc = mbedtls_x509_crt_parse_file(&net->ctx->clicert, opts->keyStore);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_x509_crt_parse_file");
+            goto free_ctx;
+        }
+
+        /* parse client key */
+        rc = mbedtls_pk_parse_keyfile(&net->ctx->pkey, opts->privateKey, opts->privateKeyPassword);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_pk_parse_keyfile");
+            goto free_ctx;
+        }
+
+        /* config own cert */
+        rc = mbedtls_ssl_conf_own_cert(&net->ctx->conf, &net->ctx->clicert, &net->ctx->pkey);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_ssl_conf_own_cert");
+            goto free_ctx;
+        }
+    }
+
+    if (opts->trustStore)
+    {
+        /* parse CA file */
+        rc = mbedtls_x509_crt_parse_file(&net->ctx->cacert, opts->trustStore);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_x509_crt_parse_file");
+            goto free_ctx;
+        }
+        /* set the ca certificate chain */
+        mbedtls_ssl_conf_ca_chain(&net->ctx->conf, &net->ctx->cacert, NULL);
+    }
+
+    if (opts->enableServerCertAuth)
+    {
+        mbedtls_ssl_conf_authmode(&net->ctx->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    } else {
+        mbedtls_ssl_conf_authmode(&net->ctx->conf, MBEDTLS_SSL_VERIFY_NONE);
+    }
+
+    /* custom mbedtls verify */
+    if (!opts->verify) {
+        mbedtls_ssl_conf_verify(&net->ctx->conf, SSL_verify_discard, NULL);
+    }
+
+    if (opts->enabledCipherSuites)
+    {
+        /* TODO */
+    }
+    goto exit;
+free_ctx:
+    if (NULL != net->ctx) {
+        mbedtls_ssl_config_free(&net->ctx->conf);
+        mbedtls_ctr_drbg_free(&net->ctx->ctr_drbg);
+        mbedtls_entropy_free(&net->ctx->entropy);
+        mbedtls_x509_crt_free(&net->ctx->cacert);
+        mbedtls_x509_crt_free(&net->ctx->clicert);
+        mbedtls_pk_free(&net->ctx->pkey);
+        mbedtls_free(net->ctx);
+        net->ctx = NULL;
+    }
+exit:
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+
+int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
+    const char* hostname, size_t hostname_len)
+{
+    int rc = 1;
+    int ret_state = 0;
+
+    FUNC_ENTRY;
+
+    if (net->ctx != NULL || (ret_state = SSLSocket_createContext(net, opts)) == 0)
+    {
+        char *hostname_plus_null;
+        if (net->ssl == NULL) {
+            net->ssl = malloc(sizeof(mbedtls_ssl_context));
+            if (net->ssl == NULL)
+            {
+                Log(TRACE_PROTOCOL, -1, "allocate ssl context failed.");
+                rc = -1;
+                goto exit;
+            }
+            mbedtls_ssl_init(net->ssl);
+        }
+        if ((ret_state = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
+          Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", ret_state);
+          rc = -1;
+          goto free_ssl;
+        }
+
+        hostname_plus_null = malloc(hostname_len + 1u );
+        MQTTStrncpy(hostname_plus_null, hostname, hostname_len + 1u);
+        if((ret_state = mbedtls_ssl_set_hostname(net->ssl, hostname_plus_null)) != 0)
+        {
+            Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", ret_state);
+            free(hostname_plus_null);
+            rc = -1;
+            goto free_ssl;
+        }
+        free(hostname_plus_null);
+
+        mbedtls_ssl_set_bio(net->ssl, &net->socket, mbedtls_net_send, mbedtls_net_recv, NULL );
+    }
+    goto exit;
+free_ssl:
+    free(net->ssl);
+exit:
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+/*
+ * Return value: 1 - success, TCPSOCKET_INTERRUPTED - try again, anything else is failure
+ */
+int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int (*cb)(const char *str, size_t len, void *u), void* u)
+{
+    int rc = 1;
+    int ret_state = 0;
+    int flags = 0;
+
+    FUNC_ENTRY;
+
+    ret_state = mbedtls_ssl_handshake(ssl);
+
+    if(ret_state == MBEDTLS_ERR_SSL_WANT_READ ||
+            ret_state == MBEDTLS_ERR_SSL_WANT_WRITE ||
+            ret_state == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+            ret_state == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS)
+    {
+        rc = TCPSOCKET_INTERRUPTED;
+    } else if (ret_state == 0) {
+        /* handshake complete check server certificate */
+        Log(TRACE_MAXIMUM, 1, "ssl handshake complete.");
+        rc = 1;
+    } else {
+        rc = -1;
+        Log(TRACE_PROTOCOL, -1, "failed! mbedtls_ssl_handshake returned -0x%x\n", ret_state);
+    }
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+
+/**
+ *  Reads one byte from a socket
+ *  @param socket the socket to read from
+ *  @param c the character read, returned
+ *  @return completion code
+ */
+int SSLSocket_getch(SSL* ssl, int socket, char* c)
+{
+    int rc = SOCKET_ERROR;
+    int ret_state = 0;
+
+    FUNC_ENTRY;
+    if ((rc = SocketBuffer_getQueuedChar(socket, c)) != SOCKETBUFFER_INTERRUPTED)
+        goto exit;
+
+    if ((ret_state = mbedtls_ssl_read(ssl, c, (size_t)1)) < 0) {
+        if(ret_state == MBEDTLS_ERR_SSL_WANT_READ ||
+                ret_state == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                ret_state == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                ret_state == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                ret_state == MBEDTLS_ERR_SSL_CLIENT_RECONNECT) {
+            rc = TCPSOCKET_INTERRUPTED;
+            SocketBuffer_interrupted(socket, 0);
+        }
+    }
+    else if (ret_state == 0)
+        rc = SOCKET_ERROR;  /* The return value from recv is 0 when the peer has performed an orderly shutdown. */
+    else if (ret_state == 1)
+    {
+        SocketBuffer_queueChar(socket, *c);
+        rc = TCPSOCKET_COMPLETE;
+    }
+exit:
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+
+/**
+ *  Attempts to read a number of bytes from a socket, non-blocking. If a previous read did not
+ *  finish, then retrieve that data.
+ *  @param socket the socket to read from
+ *  @param bytes the number of bytes to read
+ *  @param actual_len the actual number of bytes read
+ *  @return completion code
+ */
+char *SSLSocket_getdata(SSL* ssl, int socket, size_t bytes, size_t* actual_len)
+{
+    int rc;
+    char* buf;
+
+    FUNC_ENTRY;
+    if (bytes == 0)
+    {
+        buf = SocketBuffer_complete(socket);
+        goto exit;
+    }
+
+    buf = SocketBuffer_getQueuedData(socket, bytes, actual_len);
+
+    if ((rc = mbedtls_ssl_read(ssl, buf + (*actual_len), (int)(bytes - (*actual_len)))) < 0)
+    {
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
+        {
+            buf = NULL;
+            goto exit;
+        }
+    }
+    else if (rc == 0) /* rc 0 means the other end closed the socket */
+    {
+        buf = NULL;
+        goto exit;
+    }
+    else
+        *actual_len += rc;
+
+    if (*actual_len == bytes)
+    {
+        SocketBuffer_complete(socket);
+        /* if we read the whole packet, there might still be data waiting in the SSL buffer, which
+        isn't picked up by select.  So here we should check for any data remaining in the SSL buffer, and
+        if so, add this socket to a new "pending SSL reads" list.
+        */
+        if (mbedtls_ssl_get_bytes_avail(ssl) > 0) /* return no of bytes pending */
+            SSLSocket_addPendingRead(socket);
+    }
+    else /* we didn't read the whole packet */
+    {
+        SocketBuffer_interrupted(socket, *actual_len);
+        Log(TRACE_MAX, -1, "SSL_read: %d bytes expected but %d bytes now received", bytes, *actual_len);
+    }
+exit:
+    FUNC_EXIT;
+    return buf;
+}
+
+void SSLSocket_destroyContext(networkHandles* net)
+{
+    FUNC_ENTRY;
+    if (net->ctx)
+        mbedtls_ssl_config_free(&net->ctx->conf);
+        mbedtls_ctr_drbg_free(&net->ctx->ctr_drbg);
+        mbedtls_entropy_free(&net->ctx->entropy);
+        mbedtls_x509_crt_free(&net->ctx->cacert);
+        mbedtls_x509_crt_free(&net->ctx->clicert);
+        mbedtls_pk_free(&net->ctx->pkey);
+        free(net->ctx);
+        net->ctx = NULL;
+    FUNC_EXIT;
+}
+
+static List pending_reads = {NULL, NULL, NULL, 0, 0};
+
+int SSLSocket_close(networkHandles* net)
+{
+    int rc = 1;
+
+    FUNC_ENTRY;
+    /* clean up any pending reads for this socket */
+    if (pending_reads.count > 0 && ListFindItem(&pending_reads, &net->socket, intcompare))
+        ListRemoveItem(&pending_reads, &net->socket, intcompare);
+
+    if (net->ssl)
+    {
+        rc = mbedtls_ssl_close_notify(net->ssl);
+        mbedtls_ssl_free(net->ssl);
+        mbedtls_free(net->ssl);
+        net->ssl = NULL;
+    }
+    SSLSocket_destroyContext(net);
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+
+/* No SSL_writev() provided by OpenSSL. Boo. */
+int SSLSocket_putdatas(SSL* ssl, int socket, char* buf0, size_t buf0len, int count, char** buffers, size_t* buflens, int* frees)
+{
+    int rc = 0;
+    int i;
+    char *ptr;
+    iobuf iovec;
+    int sslerror;
+
+    FUNC_ENTRY;
+    iovec.iov_len = (ULONG)buf0len;
+    for (i = 0; i < count; i++)
+        iovec.iov_len += (ULONG)buflens[i];
+
+    ptr = iovec.iov_base = (char *)malloc(iovec.iov_len);
+    memcpy(ptr, buf0, buf0len);
+    ptr += buf0len;
+    for (i = 0; i < count; i++)
+    {
+        memcpy(ptr, buffers[i], buflens[i]);
+        ptr += buflens[i];
+    }
+
+    SSL_lock_mutex(&sslCoreMutex);
+    if ((rc = mbedtls_ssl_write(ssl, iovec.iov_base, iovec.iov_len)) == iovec.iov_len)
+        rc = TCPSOCKET_COMPLETE;
+    else
+    {
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
+        {
+            int* sockmem = (int*)malloc(sizeof(int));
+            int free = 1;
+
+            Log(TRACE_MIN, -1, "Partial write: incomplete write of %d bytes on SSL socket %d",
+                iovec.iov_len, socket);
+            SocketBuffer_pendingWrite(socket, ssl, 1, &iovec, &free, iovec.iov_len, 0);
+            *sockmem = socket;
+            ListAppend(s.write_pending, sockmem, sizeof(int));
+            FD_SET(socket, &(s.pending_wset));
+            rc = TCPSOCKET_INTERRUPTED;
+        }
+        else
+            rc = SOCKET_ERROR;
+    }
+    SSL_unlock_mutex(&sslCoreMutex);
+
+    if (rc != TCPSOCKET_INTERRUPTED)
+        free(iovec.iov_base);
+    else
+    {
+        int i;
+        free(buf0);
+        for (i = 0; i < count; ++i)
+        {
+            if (frees[i])
+            {
+            free(buffers[i]);
+            buffers[i] = NULL;
+            }
+        }
+    }
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+
+void SSLSocket_addPendingRead(int sock)
+{
+    FUNC_ENTRY;
+    if (ListFindItem(&pending_reads, &sock, intcompare) == NULL) /* make sure we don't add the same socket twice */
+    {
+        int* psock = (int*)malloc(sizeof(sock));
+        *psock = sock;
+        ListAppend(&pending_reads, psock, sizeof(sock));
+    }
+    else
+        Log(TRACE_MIN, -1, "SSLSocket_addPendingRead: socket %d already in the list", sock);
+
+    FUNC_EXIT;
+}
+
+
+int SSLSocket_getPendingRead(void)
+{
+    int sock = -1;
+
+    if (pending_reads.count > 0)
+    {
+        sock = *(int*)(pending_reads.first->content);
+        ListRemoveHead(&pending_reads);
+    }
+    return sock;
+}
+
+
+int SSLSocket_continueWrite(pending_writes* pw)
+{
+    int rc = 0;
+
+    FUNC_ENTRY;
+    if ((rc = mbedtls_ssl_write(pw->ssl, pw->iovecs[0].iov_base, pw->iovecs[0].iov_len)) == pw->iovecs[0].iov_len)
+    {
+        /* topic and payload buffers are freed elsewhere, when all references to them have been removed */
+        free(pw->iovecs[0].iov_base);
+        Log(TRACE_MIN, -1, "SSL continueWrite: partial write now complete for socket %d", pw->socket);
+        rc = 1;
+    }
+    else
+    {
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
+            rc = 0; /* indicate we haven't finished writing the payload yet */
+    }
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+#endif

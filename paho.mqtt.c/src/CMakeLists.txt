@@ -195,3 +195,64 @@ IF (PAHO_WITH_SSL)
 	TARGET_LINK_LIBRARIES( Sha1TestOpenSSL ${OPENSSL_LIB} ${OPENSSLCRYPTO_LIB} )
 	TARGET_COMPILE_DEFINITIONS( Sha1TestOpenSSL PUBLIC "-DSHA1_TEST -DOPENSSL=1" )
 ENDIF (PAHO_WITH_SSL)
+
+IF (PAHO_WITH_MBEDTLS)
+    SET(MBEDTLS_SEARCH_PATH "" CACHE STRING "Directory containing mbedtls libraries and includes.")
+
+    FIND_PATH(MBEDTLS_INCLUDE_DIR NAMES mbedtls/ssl.h 
+        PATHS ${MBEDTLS_SEARCH_PATH}/include
+        NO_DEFAULT_PATH)
+    FIND_LIBRARY(MBEDTLS_TLS_LIB NAMES mbedtls
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
+        NO_DEFAULT_PATH)
+    FIND_LIBRARY(MBEDTLS_X509_LIB NAMES mbedx509
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
+        NO_DEFAULT_PATH)
+    FIND_LIBRARY(MBEDTLS_CRYPTO_LIB NAMES mbedcrypto
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
+        NO_DEFAULT_PATH)
+
+    MESSAGE(STATUS "mbedtls paths: ${MBEDTLS_SEARCH_PATH}")
+    MESSAGE(STATUS "mbedtls headers found at ${MBEDTLS_INCLUDE_DIR}")
+    MESSAGE(STATUS "mbedtls TLS library found at ${MBEDTLS_TLS_LIB}")
+    MESSAGE(STATUS "mbedtls X509 library found at ${MBEDTLS_X509_LIB}")
+    MESSAGE(STATUS "mbedtls Crypto library found at ${MBEDTLS_CRYPTO_LIB}")
+
+    INCLUDE_DIRECTORIES(${MBEDTLS_INCLUDE_DIR})
+
+    ## common compilation for libpaho-mqtt3cs and libpaho-mqtt3as
+    ## Note: SSL libraries must be recompiled due ifdefs
+    ADD_LIBRARY(common_ssl_obj OBJECT ${common_src})
+    SET_PROPERTY(TARGET common_ssl_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
+    SET_PROPERTY(TARGET common_ssl_obj PROPERTY COMPILE_DEFINITIONS "MBEDTLS=1")
+    ADD_LIBRARY(paho-mqtt3cs SHARED $<TARGET_OBJECTS:common_ssl_obj> MQTTClient.c SSLSocket.c)
+    ADD_LIBRARY(paho-mqtt3as SHARED $<TARGET_OBJECTS:common_ssl_obj> MQTTAsync.c SSLSocket.c)
+
+    TARGET_LINK_LIBRARIES(paho-mqtt3cs ${MBEDTLS_TLS_LIB} ${MBEDTLS_X509_LIB} ${MBEDTLS_CRYPTO_LIB} ${LIBS_SYSTEM})
+    TARGET_LINK_LIBRARIES(paho-mqtt3as ${MBEDTLS_TLS_LIB} ${MBEDTLS_X509_LIB} ${MBEDTLS_CRYPTO_LIB} ${LIBS_SYSTEM})
+    SET_TARGET_PROPERTIES(
+        paho-mqtt3cs paho-mqtt3as PROPERTIES
+        VERSION ${CLIENT_VERSION}
+        SOVERSION ${PAHO_VERSION_MAJOR}
+        COMPILE_DEFINITIONS "MEBDTLS=1")
+    INSTALL(TARGETS paho-mqtt3cs paho-mqtt3as
+        ARCHIVE DESTINATION  ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION  ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION  ${CMAKE_INSTALL_BINDIR})
+
+    IF (PAHO_BUILD_STATIC)
+        ADD_LIBRARY(paho-mqtt3cs-static STATIC $<TARGET_OBJECTS:common_ssl_obj> MQTTClient.c SSLSocket.c)
+        ADD_LIBRARY(paho-mqtt3as-static STATIC $<TARGET_OBJECTS:common_ssl_obj> MQTTAsync.c SSLSocket.c)
+
+        TARGET_LINK_LIBRARIES(paho-mqtt3cs-static ${MBEDTLS_TLS_LIB} ${MBEDTLS_X509_LIB} ${MBEDTLS_CRYPTO_LIB} ${LIBS_SYSTEM})
+        TARGET_LINK_LIBRARIES(paho-mqtt3as-static ${MBEDTLS_TLS_LIB} ${MBEDTLS_X509_LIB} ${MBEDTLS_CRYPTO_LIB} ${LIBS_SYSTEM})
+        SET_TARGET_PROPERTIES(
+        paho-mqtt3cs-static paho-mqtt3as-static PROPERTIES
+        VERSION ${CLIENT_VERSION}
+        SOVERSION ${PAHO_VERSION_MAJOR}
+        COMPILE_DEFINITIONS "MBEDTLS=1")
+
+        INSTALL(TARGETS paho-mqtt3cs-static paho-mqtt3as-static
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    ENDIF(PAHO_BUILD_STATIC)
+ENDIF(PAHO_WITH_MBEDTLS)

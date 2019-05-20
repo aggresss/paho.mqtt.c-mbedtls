@@ -29,6 +29,12 @@
 #endif
 #include <openssl/ssl.h>
 #endif
+#if defined(MBEDTLS)
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ssl.h>
+#endif
+
 #include "MQTTClient.h"
 #include "LinkedList.h"
 #include "MQTTClientPersistence.h"
@@ -74,12 +80,28 @@ typedef struct
 	int qos;
 } willMessages;
 
+#if defined(MBEDTLS)
+typedef struct
+{
+    mbedtls_ssl_config conf;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_x509_crt cacert;
+    mbedtls_x509_crt clicert;
+    mbedtls_pk_context pkey;
+}SSL_CTX;
+
+typedef mbedtls_ssl_context SSL;
+typedef mbedtls_ssl_session SSL_SESSION;
+
+#endif
+
 typedef struct
 {
 	int socket;
 	time_t lastSent;
 	time_t lastReceived;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	SSL* ssl;
 	SSL_CTX* ctx;
 #endif
@@ -132,7 +154,7 @@ typedef struct
 	void* context; /* calling context - used when calling disconnect_internal */
 	int MQTTVersion;
 	int sessionExpiry; /**< MQTT 5 session expiry */
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	MQTTClient_SSLOptions *sslopts;
 	SSL_SESSION* session;    /***< SSL session pointer for fast handhake */
 #endif

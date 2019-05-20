@@ -771,7 +771,7 @@ void MQTTProtocol_freeClient(Clients* client)
 		free((void*)client->username);
 	if (client->password)
 		free((void*)client->password);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (client->sslopts)
 	{
 		if (client->sslopts->trustStore)
