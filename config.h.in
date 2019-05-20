@@ -1,0 +1,8 @@
+#ifndef __CONFIG_H__
+#define __CONFIG_H__
+
+#cmakedefine PROJECT_SOURCE_DIR "@PROJECT_SOURCE_DIR@"
+#cmakedefine PROJECT_BINARY_DIR "@PROJECT_BINARY_DIR@"
+
+
+#endif
