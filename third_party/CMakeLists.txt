@@ -34,6 +34,27 @@ if(WITH_MBEDTLS)
     set(MBEDTLS_PREFIX ${PROJECT_BINARY_DIR}/third_party/mbedtls PARENT_SCOPE)
 endif(WITH_MBEDTLS)
 
+option(WITH_OPENSSL "Build with openssl" OFF)
+if(WITH_OPENSSL)
+  ExternalProject_Add(external-openssl
+    BUILD_IN_SOURCE TRUE
+    URL https://github.com/openssl/openssl/archive/OpenSSL_1_1_1b.tar.gz
+    UPDATE_COMMAND ""
+    CONFIGURE_COMMAND
+      ./Configure
+      -fPIC
+      no-asm
+      linux-generic32
+      --prefix=${PROJECT_BINARY_DIR}/third_party/openssl
+      --cross-compile-prefix=${C_COMPILER_PREFIX}
+      no-shared
+    BUILD_COMMAND make
+    INSTALL_COMMAND make install
+    TEST_COMMAND ""
+    )
+    set(OPENSSL_PREFIX ${PROJECT_BINARY_DIR}/third_party/openssl PARENT_SCOPE)
+endif(WITH_OPENSSL)
+
 option(WITH_WOLFSSL "Build with wolfssl" OFF)
 if(WITH_WOLFSSL)
   ExternalProject_Add(external-wolfSSL
