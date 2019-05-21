@@ -197,24 +197,22 @@ IF (PAHO_WITH_SSL)
 ENDIF (PAHO_WITH_SSL)
 
 IF (PAHO_WITH_MBEDTLS)
-    IF (PAHO_MBEDTLS_PATH STREQUAL "")
-        MESSAGE(FATAL_ERROR "Input mbedtls library path with PAHO_MBEDTLS_PATH when build.")
-    ENDIF ()
+    SET(MBEDTLS_SEARCH_PATH "" CACHE STRING "Directory containing mbedtls libraries and includes.")
 
     FIND_PATH(MBEDTLS_INCLUDE_DIR NAMES mbedtls/ssl.h 
-        PATHS ${PAHO_MBEDTLS_PATH}/include
+        PATHS ${MBEDTLS_SEARCH_PATH}/include
         NO_DEFAULT_PATH)
     FIND_LIBRARY(MBEDTLS_TLS_LIB NAMES mbedtls
-        PATHS ${PAHO_MBEDTLS_PATH}/lib
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
         NO_DEFAULT_PATH)
     FIND_LIBRARY(MBEDTLS_X509_LIB NAMES mbedx509
-        PATHS ${PAHO_MBEDTLS_PATH}/lib
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
         NO_DEFAULT_PATH)
     FIND_LIBRARY(MBEDTLS_CRYPTO_LIB NAMES mbedcrypto
-        PATHS ${PAHO_MBEDTLS_PATH}/lib
+        PATHS ${MBEDTLS_SEARCH_PATH}/lib
         NO_DEFAULT_PATH)
 
-    MESSAGE(STATUS "mbedtls paths: ${PAHO_MBEDTLS_PATH}")
+    MESSAGE(STATUS "mbedtls paths: ${MBEDTLS_SEARCH_PATH}")
     MESSAGE(STATUS "mbedtls headers found at ${MBEDTLS_INCLUDE_DIR}")
     MESSAGE(STATUS "mbedtls TLS library found at ${MBEDTLS_TLS_LIB}")
     MESSAGE(STATUS "mbedtls X509 library found at ${MBEDTLS_X509_LIB}")
