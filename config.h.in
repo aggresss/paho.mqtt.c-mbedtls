@@ -4,5 +4,6 @@
 #cmakedefine PROJECT_SOURCE_DIR "@PROJECT_SOURCE_DIR@"
 #cmakedefine PROJECT_BINARY_DIR "@PROJECT_BINARY_DIR@"
 
+#define CERT_PATH PROJECT_SOURCE_DIR"/material/tls/"
 
 #endif

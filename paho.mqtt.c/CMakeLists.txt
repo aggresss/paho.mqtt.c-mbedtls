@@ -50,7 +50,8 @@ SET(PAHO_BUILD_SAMPLES FALSE CACHE BOOL "Build sample programs")
 SET(PAHO_BUILD_DEB_PACKAGE FALSE CACHE BOOL "Build debian package")
 SET(PAHO_ENABLE_TESTING TRUE CACHE BOOL "Build tests and run")
 SET(PAHO_ENABLE_CPACK TRUE CACHE BOOL "Enable CPack")
-
+SET(PAHO_WITH_MBEDTLS TRUE CACHE BOOL "Flag that defines whether to build ssl with mbedtls.")
+SET(PAHO_MBEDTLS_PATH "" CACHE PATH "Directory containing mbedtls libraries and includes.")
 
 ADD_SUBDIRECTORY(src)
 IF(PAHO_BUILD_SAMPLES)
