@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
 # When OpenSSL prompts you for the Common Name for each certificate, use different names.
 
-# CA 相关
-
 # CA key
 openssl genrsa -out ca.key 2048
 # CA csr
 openssl req -new -subj "/CN=ca" -key ca.key -out ca.csr
 # CA crt
 openssl x509 -req -in ca.csr -out ca.crt -signkey ca.key -days 3650
-
-# 用户证书相关
 
 # server key
 openssl genrsa -out server.key 2048
@@ -29,3 +25,4 @@ openssl req -new -subj "/CN=client" -key client.key -out client.csr
 openssl x509 -req -in client.csr -out client.crt -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650
 # client.crt verify
 openssl verify -CAfile ca.crt  client.crt
+
