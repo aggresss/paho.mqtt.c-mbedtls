@@ -26,3 +26,5 @@ openssl x509 -req -in client.csr -out client.crt -CA ca.crt -CAkey ca.key -CAcre
 # client.crt verify
 openssl verify -CAfile ca.crt  client.crt
 
+# md5 checksum
+md5sum * > md5.txt
