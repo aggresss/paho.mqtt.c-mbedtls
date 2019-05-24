@@ -87,6 +87,8 @@ typedef struct
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_x509_crt cacert;
+    mbedtls_x509_crt clicert;
+    mbedtls_pk_context pkey;
 }SSL_CTX;
 
 typedef mbedtls_ssl_context SSL;

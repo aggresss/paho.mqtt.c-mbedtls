@@ -1202,15 +1202,10 @@ char* SSLSocket_get_version_string(int version)
     }
     version_string_table[] =
     {
-        { SSL2_VERSION, "SSL 2.0" },
-        { SSL3_VERSION, "SSL 3.0" },
-        { TLS1_VERSION, "TLS 1.0" },
-#if defined(TLS2_VERSION)
-        { TLS2_VERSION, "TLS 1.1" },
-#endif
-#if defined(TLS3_VERSION)
-        { TLS3_VERSION, "TLS 1.2" },
-#endif
+        { MBEDTLS_SSL_MINOR_VERSION_0, "SSL 3.0" },
+        { MBEDTLS_SSL_MINOR_VERSION_1, "TLS 1.0" },
+        { MBEDTLS_SSL_MINOR_VERSION_2, "TLS 1.1" },
+        { MBEDTLS_SSL_MINOR_VERSION_3, "TLS 1.2" },
     };
 
     for (i = 0; i < ARRAY_SIZE(version_string_table); ++i)
@@ -1305,122 +1300,131 @@ void SSLSocket_terminate(void)
 int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 {
     int rc = 1;
+    /* RNG related string */
+    const char personalization[] = "paho_mbedtls_entropy";
 
     FUNC_ENTRY;
+
     if (net->ctx == NULL)
     {
+        net->ctx = (SSL_CTX*)mbedtls_calloc(sizeof(SSL_CTX), 1);
+
+        if (net->ctx == NULL)
+        {
+            Log(TRACE_PROTOCOL, -1, "allocate context failed.");
+            goto exit;
+        }
+
+        /* initialise the mbedtls context */
+        mbedtls_ssl_config_init(&net->ctx->conf);
+        /* initialise RNG */
+        mbedtls_entropy_init(&net->ctx->entropy);
+        mbedtls_ctr_drbg_init(&net->ctx->ctr_drbg);
+        /* init certificates */
+        mbedtls_x509_crt_init(&net->ctx->cacert);
+        mbedtls_x509_crt_init(&net->ctx->clicert);
+        mbedtls_pk_init(&net->ctx->pkey);
+
+        if ((rc = mbedtls_ctr_drbg_seed(
+                &net->ctx->ctr_drbg, mbedtls_entropy_func,
+                &net->ctx->entropy, (const unsigned char*)personalization,
+                 sizeof(personalization))) != 0) {
+          Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_ctr_drbg_seed returned %d", rc);
+          goto free_ctx;
+        }
+
+        mbedtls_ssl_conf_rng(&net->ctx->conf, mbedtls_ctr_drbg_random,
+                             &net->ctx->ctr_drbg);
+
+        /* load default config */
+        rc = mbedtls_ssl_config_defaults(&net->ctx->conf,
+                MBEDTLS_SSL_IS_CLIENT,
+                MBEDTLS_SSL_TRANSPORT_STREAM,
+                MBEDTLS_SSL_PRESET_DEFAULT);
+
         int sslVersion = MQTT_SSL_VERSION_DEFAULT;
         if (opts->struct_version >= 1) sslVersion = opts->sslVersion;
-/* SSL_OP_NO_TLSv1_1 is defined in ssl.h if the library version supports TLSv1.1.
- * OPENSSL_NO_TLS1 is defined in opensslconf.h or on the compiler command line
- * if TLS1.x was removed at OpenSSL library build time via Configure options.
- */
         switch (sslVersion)
         {
         case MQTT_SSL_VERSION_DEFAULT:
-            net->ctx = SSL_CTX_new(SSLv23_client_method()); /* SSLv23 for compatibility with SSLv2, SSLv3 and TLSv1 */
             break;
-#if defined(SSL_OP_NO_TLSv1) && !defined(OPENSSL_NO_TLS1)
         case MQTT_SSL_VERSION_TLS_1_0:
-            net->ctx = SSL_CTX_new(TLSv1_client_method());
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_1);
             break;
-#endif
-#if defined(SSL_OP_NO_TLSv1_1) && !defined(OPENSSL_NO_TLS1)
         case MQTT_SSL_VERSION_TLS_1_1:
-            net->ctx = SSL_CTX_new(TLSv1_1_client_method());
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_2);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_2);
             break;
-#endif
-#if defined(SSL_OP_NO_TLSv1_2) && !defined(OPENSSL_NO_TLS1)
         case MQTT_SSL_VERSION_TLS_1_2:
-            net->ctx = SSL_CTX_new(TLSv1_2_client_method());
+            mbedtls_ssl_conf_min_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+            mbedtls_ssl_conf_max_version(&net->ctx->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
             break;
-#endif
         default:
             break;
         }
-        if (net->ctx == NULL)
-        {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_CTX_new", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_CTX_new", NULL, net->socket, rc, NULL, NULL);
-            goto exit;
-        }
+
     }
 
-    if (opts->keyStore)
+    if (opts->keyStore && opts->privateKey)
     {
-        if ((rc = SSL_CTX_use_certificate_chain_file(net->ctx, opts->keyStore)) != 1)
-        {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_CTX_use_certificate_chain_file", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_CTX_use_certificate_chain_file", NULL, net->socket, rc, NULL, NULL);
-            goto free_ctx; /*If we can't load the certificate (chain) file then loading the privatekey won't work either as it needs a matching cert already loaded */
+        /* parse client cert */
+        rc = mbedtls_x509_crt_parse_file(&net->ctx->clicert, opts->keyStore);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_x509_crt_parse_file");
+            goto free_ctx;
         }
 
-        if (opts->privateKey == NULL)
-            opts->privateKey = opts->keyStore;   /* the privateKey can be included in the keyStore */
-
-        if (opts->privateKeyPassword != NULL)
-        {
-            SSL_CTX_set_default_passwd_cb(net->ctx, pem_passwd_cb);
-            SSL_CTX_set_default_passwd_cb_userdata(net->ctx, (void*)opts->privateKeyPassword);
+        /* parse client key */
+        rc = mbedtls_pk_parse_keyfile(&net->ctx->pkey, opts->privateKey, opts->privateKeyPassword);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_pk_parse_keyfile");
+            goto free_ctx;
         }
 
-        /* support for ASN.1 == DER format? DER can contain only one certificate? */
-        rc = SSL_CTX_use_PrivateKey_file(net->ctx, opts->privateKey, SSL_FILETYPE_PEM);
-        if (opts->privateKey == opts->keyStore)
-            opts->privateKey = NULL;
-        if (rc != 1)
-        {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_CTX_use_PrivateKey_file", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_CTX_use_PrivateKey_file", NULL, net->socket, rc, NULL, NULL);
+        /* config own cert */
+        rc = mbedtls_ssl_conf_own_cert(&net->ctx->conf, &net->ctx->clicert, &net->ctx->pkey);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_ssl_conf_own_cert");
             goto free_ctx;
         }
     }
 
     if (opts->trustStore)
     {
-        if ((rc = SSL_CTX_load_verify_locations(net->ctx, opts->trustStore, NULL)) != 1)
-        {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_CTX_load_verify_locations", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_CTX_load_verify_locations", NULL, net->socket, rc, NULL, NULL);
+        /* parse CA file */
+        rc = mbedtls_x509_crt_parse_file(&net->ctx->cacert, opts->trustStore);
+        if (rc != 0) {
+            Log(TRACE_PROTOCOL, -1, "failed ! mbedtls_x509_crt_parse_file");
             goto free_ctx;
         }
+        /* set the ca certificate chain */
+        mbedtls_ssl_conf_ca_chain(&net->ctx->conf, &net->ctx->cacert, NULL);
     }
-    else if ((rc = SSL_CTX_set_default_verify_paths(net->ctx)) != 1)
+
+    if (opts->enableServerCertAuth)
     {
-        if (opts->struct_version >= 3)
-            SSLSocket_error("SSL_CTX_set_default_verify_paths", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-        else
-            SSLSocket_error("SSL_CTX_set_default_verify_paths", NULL, net->socket, rc, NULL, NULL);
-        goto free_ctx;
+        mbedtls_ssl_conf_authmode(&net->ctx->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    } else {
+        mbedtls_ssl_conf_authmode(&net->ctx->conf, MBEDTLS_SSL_VERIFY_NONE);
     }
 
     if (opts->enabledCipherSuites)
     {
-        if ((rc = SSL_CTX_set_cipher_list(net->ctx, opts->enabledCipherSuites)) != 1)
-        {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_CTX_set_cipher_list", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_CTX_set_cipher_list", NULL, net->socket, rc, NULL, NULL);
-            goto free_ctx;
-        }
+        /* TODO */
     }
-
-    SSL_CTX_set_mode(net->ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-
     goto exit;
 free_ctx:
-    SSL_CTX_free(net->ctx);
-    net->ctx = NULL;
-
+    if (NULL != net->ctx) {
+        mbedtls_ssl_config_free(&net->ctx->conf);
+        mbedtls_ctr_drbg_free(&net->ctx->ctr_drbg);
+        mbedtls_entropy_free(&net->ctx->entropy);
+        mbedtls_x509_crt_free(&net->ctx->cacert);
+        mbedtls_x509_crt_free(&net->ctx->clicert);
+        mbedtls_pk_free(&net->ctx->pkey);
+        mbedtls_free(net->ctx);
+        net->ctx = NULL;
+    }
 exit:
     FUNC_EXIT_RC(rc);
     return rc;
