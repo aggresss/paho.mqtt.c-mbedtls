@@ -67,7 +67,7 @@
 #  endif /* if !defined( snprintf ) */
 #endif
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 #include "SSLSocket.h"
 #endif /* defined(OPENSSL) */
 #include "Socket.h"
@@ -363,7 +363,7 @@ int WebSocket_connect( networkHandles *net, const char *uri )
 
 	if ( buf )
 	{
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		if (net->ssl)
 			SSLSocket_putdatas(net->ssl, net->socket,
 				buf, buf_len, 0, NULL, NULL, NULL );
@@ -428,7 +428,7 @@ void WebSocket_close(networkHandles *net, int status_code, const char *reason)
 			&buf0[header_len], buf0len, 0, NULL, NULL );
 
 		buf0len += header_len;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		if (net->ssl)
 			SSLSocket_putdatas(net->ssl, net->socket,
 				buf0, buf0len, 0, NULL, NULL, NULL);
@@ -495,7 +495,7 @@ int WebSocket_getch(networkHandles *net, char* c)
 			rc = TCPSOCKET_COMPLETE;
 		}
 	}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	else if ( net->ssl )
 		rc = SSLSocket_getch(net->ssl, net->socket, c);
 #endif
@@ -598,7 +598,7 @@ char *WebSocket_getRawSocketData(
 	networkHandles *net, size_t bytes, size_t* actual_len)
 {
 	char *rv;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if ( net->ssl )
 		rv = SSLSocket_getdata(net->ssl, net->socket, bytes, actual_len);
 	else
@@ -636,7 +636,7 @@ void WebSocket_pong(networkHandles *net, char *app_data,
 
 		Log(TRACE_PROTOCOL, 1, "Sending WebSocket PONG" );
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		if (net->ssl)
 			SSLSocket_putdatas(net->ssl, net->socket, buf0,
 				header_len + app_data_len, 1,
@@ -703,7 +703,7 @@ int WebSocket_putdatas(networkHandles* net, char* buf0, size_t buf0len,
 		}
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (net->ssl)
 		rc = SSLSocket_putdatas(net->ssl, net->socket, buf0, buf0len, count, buffers, buflens, freeData);
 	else
@@ -938,7 +938,7 @@ void WebSocket_terminate( void )
 		last_frame = NULL;
 	}
 	Socket_outTerminate();
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	SSLSocket_terminate();
 #endif
 	FUNC_EXIT;

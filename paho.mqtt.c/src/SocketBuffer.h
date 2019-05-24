@@ -28,6 +28,10 @@
 #include <openssl/ssl.h>
 #endif
 
+#if defined(MBEDTLS)
+#include "Clients.h"
+#endif
+
 #if defined(WIN32) || defined(WIN64)
 	typedef WSABUF iobuf;
 #else
@@ -49,7 +53,7 @@ typedef struct
 {
 	int socket, count;
 	size_t total;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	SSL* ssl;
 #endif
 	size_t bytes;
@@ -72,7 +76,7 @@ void SocketBuffer_interrupted(int socket, size_t actual_len);
 char* SocketBuffer_complete(int socket);
 void SocketBuffer_queueChar(int socket, char c);
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 void SocketBuffer_pendingWrite(int socket, SSL* ssl, int count, iobuf* iovecs, int* frees, size_t total, size_t bytes);
 #else
 void SocketBuffer_pendingWrite(int socket, int count, iobuf* iovecs, int* frees, size_t total, size_t bytes);

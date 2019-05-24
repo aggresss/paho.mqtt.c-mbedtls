@@ -76,7 +76,7 @@ const char *client_version_eye = "MQTTAsyncV3_Version " CLIENT_VERSION;
 
 void MQTTAsync_global_init(MQTTAsync_init_options* inits)
 {
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	SSLSocket_handleOpensslInit(inits->do_openssl_init);
 #endif
 }
@@ -497,7 +497,7 @@ int MQTTAsync_createWithOptions(MQTTAsync* handle, const char* serverURI, const 
 	{
 		if (strncmp(URI_TCP, serverURI, strlen(URI_TCP)) != 0
 		 && strncmp(URI_WS, serverURI, strlen(URI_WS)) != 0
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
             && strncmp(URI_SSL, serverURI, strlen(URI_SSL)) != 0
 		 && strncmp(URI_WSS, serverURI, strlen(URI_WSS)) != 0
 #endif
@@ -525,7 +525,7 @@ int MQTTAsync_createWithOptions(MQTTAsync* handle, const char* serverURI, const 
 		Socket_setWriteCompleteCallback(MQTTAsync_writeComplete);
 		handles = ListInitialize();
 		commands = ListInitialize();
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		SSLSocket_initialize();
 #endif
 		global_initialized = 1;
@@ -540,7 +540,7 @@ int MQTTAsync_createWithOptions(MQTTAsync* handle, const char* serverURI, const 
 		serverURI += strlen(URI_WS);
 		m->websocket = 1;
 	}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	else if (strncmp(URI_SSL, serverURI, strlen(URI_SSL)) == 0)
 	{
 		serverURI += strlen(URI_SSL);
@@ -1396,7 +1396,7 @@ static int MQTTAsync_processCommand(void)
 					serverURI += strlen(URI_WS);
 					command->client->websocket = 1;
 				}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 				else if (strncmp(URI_SSL, serverURI, strlen(URI_SSL)) == 0)
 				{
 					serverURI += strlen(URI_SSL);
@@ -1422,7 +1422,7 @@ static int MQTTAsync_processCommand(void)
 				command->command.details.conn.MQTTVersion = command->client->c->MQTTVersion;
 
 			Log(TRACE_PROTOCOL, -1, "Connecting to serverURI %s with MQTT version %d", serverURI, command->command.details.conn.MQTTVersion);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 			rc = MQTTProtocol_connect(serverURI, command->client->c, command->client->ssl, command->client->websocket,
 					command->command.details.conn.MQTTVersion, command->client->connectProps, command->client->willProps);
 #else
@@ -2566,12 +2566,12 @@ static void MQTTAsync_closeOnly(Clients* client, enum MQTTReasonCodes reasonCode
 			MQTTPacket_send_disconnect(client, reasonCode, props);
 		Thread_lock_mutex(socket_mutex);
 		WebSocket_close(&client->net, WebSocket_CLOSE_NORMAL, NULL);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		SSLSocket_close(&client->net);
 #endif
 		Socket_close(client->net.socket);
 		client->net.socket = 0;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		client->net.ssl = NULL;
 #endif
 		Thread_unlock_mutex(socket_mutex);
