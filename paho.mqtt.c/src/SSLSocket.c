@@ -1018,24 +1018,10 @@ void SSL_CTX_msg_callback(
         const void* buf, size_t len,
         SSL* ssl, void* arg);
 int pem_passwd_cb(char* buf, int size, int rwflag, void* userdata);
-int SSL_create_mutex(ssl_mutex_type* mutex);
-int SSL_lock_mutex(ssl_mutex_type* mutex);
-int SSL_unlock_mutex(ssl_mutex_type* mutex);
-void SSL_destroy_mutex(ssl_mutex_type* mutex);
-#if (OPENSSL_VERSION_NUMBER >= 0x010000000)
-extern void SSLThread_id(CRYPTO_THREADID *id);
-#else
-extern unsigned long SSLThread_id(void);
-#endif
-extern void SSLLocks_callback(int mode, int n, const char *file, int line);
+
 int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
 void SSLSocket_destroyContext(networkHandles* net);
 void SSLSocket_addPendingRead(int sock);
-
-/* 1 ~ we are responsible for initializing openssl; 0 ~ openssl init is done externally */
-static int handle_openssl_init = 1;
-static ssl_mutex_type* sslLocks = NULL;
-static ssl_mutex_type sslCoreMutex;
 
 #if defined(WIN32) || defined(WIN64)
 #define iov_len len
@@ -1293,154 +1279,18 @@ int pem_passwd_cb(char* buf, int size, int rwflag, void* userdata)
     return rc;
 }
 
-int SSL_create_mutex(ssl_mutex_type* mutex)
-{
-    int rc = 0;
-
-    FUNC_ENTRY;
-#if defined(WIN32) || defined(WIN64)
-    *mutex = CreateMutex(NULL, 0, NULL);
-#else
-    rc = pthread_mutex_init(mutex, NULL);
-#endif
-    FUNC_EXIT_RC(rc);
-    return rc;
-}
-
-int SSL_lock_mutex(ssl_mutex_type* mutex)
-{
-    int rc = -1;
-
-    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
-#if defined(WIN32) || defined(WIN64)
-    if (WaitForSingleObject(*mutex, INFINITE) != WAIT_FAILED)
-#else
-    if ((rc = pthread_mutex_lock(mutex)) == 0)
-#endif
-    rc = 0;
-
-    return rc;
-}
-
-int SSL_unlock_mutex(ssl_mutex_type* mutex)
-{
-    int rc = -1;
-
-    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
-#if defined(WIN32) || defined(WIN64)
-    if (ReleaseMutex(*mutex) != 0)
-#else
-    if ((rc = pthread_mutex_unlock(mutex)) == 0)
-#endif
-    rc = 0;
-
-    return rc;
-}
-
-void SSL_destroy_mutex(ssl_mutex_type* mutex)
-{
-    int rc = 0;
-
-    FUNC_ENTRY;
-#if defined(WIN32) || defined(WIN64)
-    rc = CloseHandle(*mutex);
-#else
-    rc = pthread_mutex_destroy(mutex);
-#endif
-    FUNC_EXIT_RC(rc);
-}
-
-
-
-#if (OPENSSL_VERSION_NUMBER >= 0x010000000)
-extern void SSLThread_id(CRYPTO_THREADID *id)
-{
-#if defined(WIN32) || defined(WIN64)
-    CRYPTO_THREADID_set_numeric(id, (unsigned long)GetCurrentThreadId());
-#else
-    CRYPTO_THREADID_set_numeric(id, (unsigned long)pthread_self());
-#endif
-}
-#else
-extern unsigned long SSLThread_id(void)
-{
-#if defined(WIN32) || defined(WIN64)
-    return (unsigned long)GetCurrentThreadId();
-#else
-    return (unsigned long)pthread_self();
-#endif
-}
-#endif
-
-extern void SSLLocks_callback(int mode, int n, const char *file, int line)
-{
-    if (sslLocks)
-    {
-        if (mode & CRYPTO_LOCK)
-            SSL_lock_mutex(&sslLocks[n]);
-        else
-            SSL_unlock_mutex(&sslLocks[n]);
-    }
-}
-
 
 void SSLSocket_handleOpensslInit(int bool_value)
 {
-    handle_openssl_init = bool_value;
+    return;
 }
 
 
 int SSLSocket_initialize(void)
 {
     int rc = 0;
-    /*int prc;*/
-    int i;
-    int lockMemSize;
-
     FUNC_ENTRY;
 
-    if (handle_openssl_init)
-    {
-        if ((rc = SSL_library_init()) != 1)
-            rc = -1;
-
-        ERR_load_crypto_strings();
-        SSL_load_error_strings();
-
-        /* OpenSSL 0.9.8o and 1.0.0a and later added SHA2 algorithms to SSL_library_init().
-        Applications which need to use SHA2 in earlier versions of OpenSSL should call
-        OpenSSL_add_all_algorithms() as well. */
-
-        OpenSSL_add_all_algorithms();
-
-        lockMemSize = CRYPTO_num_locks() * sizeof(ssl_mutex_type);
-
-        sslLocks = malloc(lockMemSize);
-        if (!sslLocks)
-        {
-            rc = -1;
-            goto exit;
-        }
-        else
-            memset(sslLocks, 0, lockMemSize);
-
-        for (i = 0; i < CRYPTO_num_locks(); i++)
-        {
-            /* prc = */SSL_create_mutex(&sslLocks[i]);
-        }
-
-#if (OPENSSL_VERSION_NUMBER >= 0x010000000)
-        CRYPTO_THREADID_set_callback(SSLThread_id);
-#else
-        CRYPTO_set_id_callback(SSLThread_id);
-#endif
-        CRYPTO_set_locking_callback(SSLLocks_callback);
-
-    }
-
-    SSL_create_mutex(&sslCoreMutex);
-
-exit:
     FUNC_EXIT_RC(rc);
     return rc;
 }
@@ -1448,25 +1298,6 @@ exit:
 void SSLSocket_terminate(void)
 {
     FUNC_ENTRY;
-
-    if (handle_openssl_init)
-    {
-        EVP_cleanup();
-        ERR_free_strings();
-        CRYPTO_set_locking_callback(NULL);
-        if (sslLocks)
-        {
-            int i = 0;
-
-            for (i = 0; i < CRYPTO_num_locks(); i++)
-            {
-                SSL_destroy_mutex(&sslLocks[i]);
-            }
-            free(sslLocks);
-        }
-    }
-
-    SSL_destroy_mutex(&sslCoreMutex);
 
     FUNC_EXIT;
 }

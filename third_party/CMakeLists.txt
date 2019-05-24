@@ -8,6 +8,8 @@ ExternalProject_Add(external-mbedtls
   URL http://repo.router7.com/libs/mbedtls-2.16.1.tar.gz
   URL https://github.com/ARMmbed/mbedtls/archive/mbedtls-2.16.1.tar.gz
   UPDATE_COMMAND ""
+  CONFIGURE_COMMAND ./scripts/config.pl set MBEDTLS_THREADING_C &&
+                    ./scripts/config.pl set MBEDTLS_THREADING_PTHREAD
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX:PATH=${PROJECT_BINARY_DIR}/third_party/mbedtls
     -DCMAKE_TOOLCHAIN_FILE:PATH=${TOOLCHAIN_FILE}
