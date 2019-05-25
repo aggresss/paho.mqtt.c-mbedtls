@@ -1007,121 +1007,15 @@ int SSLSocket_continueWrite(pending_writes* pw)
 
 extern Sockets s;
 
-static int SSLSocket_error(char* aString, SSL* ssl, int sock, int rc, int (*cb)(const char *str, size_t len, void *u), void* u);
-char* SSL_get_verify_result_string(int rc);
-void SSL_CTX_info_callback(const SSL* ssl, int where, int ret);
-char* SSLSocket_get_version_string(int version);
-void SSL_CTX_msg_callback(
-        int write_p,
-        int version,
-        int content_type,
-        const void* buf, size_t len,
-        SSL* ssl, void* arg);
-int pem_passwd_cb(char* buf, int size, int rwflag, void* userdata);
 
-int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
-void SSLSocket_destroyContext(networkHandles* net);
-void SSLSocket_addPendingRead(int sock);
+static int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
+static void SSLSocket_destroyContext(networkHandles* net);
+static void SSLSocket_addPendingRead(int sock);
 
 #if defined(WIN32) || defined(WIN64)
 #define iov_len len
 #define iov_base buf
 #endif
-
-/**
- * Gets the specific error corresponding to SOCKET_ERROR
- * @param aString the function that was being used when the error occurred
- * @param sock the socket on which the error occurred
- * @param rc the return code
- * @param cb the callback function to be passed as first argument to ERR_print_errors_cb
- * @param u context to be passed as second argument to ERR_print_errors_cb
- * @return the specific TCP error code
- */
-static int SSLSocket_error(char* aString, SSL* ssl, int sock, int rc, int (*cb)(const char *str, size_t len, void *u), void* u)
-{
-    int error;
-
-    FUNC_ENTRY;
-    if (ssl)
-        error = SSL_get_error(ssl, rc);
-    else
-        error = ERR_get_error();
-    if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
-    {
-        Log(TRACE_MIN, -1, "SSLSocket error WANT_READ/WANT_WRITE");
-    }
-    else
-    {
-        static char buf[120];
-
-        if (strcmp(aString, "shutdown") != 0)
-            Log(TRACE_MIN, -1, "SSLSocket error %s(%d) in %s for socket %d rc %d errno %d %s\n", buf, error, aString, sock, rc, errno, strerror(errno));
-        if (cb)
-            ERR_print_errors_cb(cb, u);
-        if (error == SSL_ERROR_SSL || error == SSL_ERROR_SYSCALL)
-            error = SSL_FATAL;
-    }
-    FUNC_EXIT_RC(error);
-    return error;
-}
-
-static struct
-{
-    int code;
-    char* string;
-}
-X509_message_table[] =
-{
-    {MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE, "MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE"},
-    {MBEDTLS_ERR_X509_UNKNOWN_OID, "MBEDTLS_ERR_X509_UNKNOWN_OID"},
-    {MBEDTLS_ERR_X509_INVALID_FORMAT, "MBEDTLS_ERR_X509_INVALID_FORMAT"},
-    {MBEDTLS_ERR_X509_INVALID_VERSION, "MBEDTLS_ERR_X509_INVALID_VERSION"},
-    {MBEDTLS_ERR_X509_INVALID_SERIAL, "MBEDTLS_ERR_X509_INVALID_SERIAL"},
-    {MBEDTLS_ERR_X509_INVALID_ALG, "MBEDTLS_ERR_X509_INVALID_ALG"},
-    {MBEDTLS_ERR_X509_INVALID_NAME, "MBEDTLS_ERR_X509_INVALID_NAME"},
-    {MBEDTLS_ERR_X509_INVALID_DATE, "MBEDTLS_ERR_X509_INVALID_DATE"},
-    {MBEDTLS_ERR_X509_INVALID_SIGNATURE, "MBEDTLS_ERR_X509_INVALID_SIGNATURE"},
-    {MBEDTLS_ERR_X509_INVALID_EXTENSIONS, "MBEDTLS_ERR_X509_INVALID_EXTENSIONS"},
-    {MBEDTLS_ERR_X509_UNKNOWN_VERSION, "MBEDTLS_ERR_X509_UNKNOWN_VERSION"},
-    {MBEDTLS_ERR_X509_UNKNOWN_SIG_ALG, "MBEDTLS_ERR_X509_UNKNOWN_SIG_ALG"},
-    {MBEDTLS_ERR_X509_SIG_MISMATCH, "MBEDTLS_ERR_X509_SIG_MISMATCH"},
-    {MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, "MBEDTLS_ERR_X509_CERT_VERIFY_FAILED"},
-    {MBEDTLS_ERR_X509_CERT_UNKNOWN_FORMAT, "MBEDTLS_ERR_X509_CERT_UNKNOWN_FORMAT"},
-    {MBEDTLS_ERR_X509_BAD_INPUT_DATA, "MBEDTLS_ERR_X509_BAD_INPUT_DATA"},
-    {MBEDTLS_ERR_X509_ALLOC_FAILED, "MBEDTLS_ERR_X509_ALLOC_FAILED"},
-    {MBEDTLS_ERR_X509_FILE_IO_ERROR, "MBEDTLS_ERR_X509_FILE_IO_ERROR"},
-    {MBEDTLS_ERR_X509_BUFFER_TOO_SMALL, "MBEDTLS_ERR_X509_BUFFER_TOO_SMALL"},
-    {MBEDTLS_ERR_X509_FATAL_ERROR, "MBEDTLS_ERR_X509_FATAL_ERROR"},
-};
-
-static struct
-{
-    int code;
-    char* string;
-}
-X509_verify_table[] =
-{
-    {MBEDTLS_X509_BADCERT_EXPIRED, "MBEDTLS_X509_BADCERT_EXPIRED"},
-    {MBEDTLS_X509_BADCERT_REVOKED, "MBEDTLS_X509_BADCERT_REVOKED"},
-    {MBEDTLS_X509_BADCERT_CN_MISMATCH, "MBEDTLS_X509_BADCERT_CN_MISMATCH"},
-    {MBEDTLS_X509_BADCERT_NOT_TRUSTED, "MBEDTLS_X509_BADCERT_NOT_TRUSTED"},
-    {MBEDTLS_X509_BADCRL_NOT_TRUSTED, "MBEDTLS_X509_BADCRL_NOT_TRUSTED"},
-    {MBEDTLS_X509_BADCRL_EXPIRED, "MBEDTLS_X509_BADCRL_EXPIRED"},
-    {MBEDTLS_X509_BADCERT_MISSING, "MBEDTLS_X509_BADCERT_MISSING"},
-    {MBEDTLS_X509_BADCERT_SKIP_VERIFY, "MBEDTLS_X509_BADCERT_SKIP_VERIFY"},
-    {MBEDTLS_X509_BADCERT_OTHER, "MBEDTLS_X509_BADCERT_OTHER"},
-    {MBEDTLS_X509_BADCERT_FUTURE, "MBEDTLS_X509_BADCERT_FUTURE"},
-    {MBEDTLS_X509_BADCRL_FUTURE, "MBEDTLS_X509_BADCRL_FUTURE"},
-    {MBEDTLS_X509_BADCERT_KEY_USAGE, "MBEDTLS_X509_BADCERT_KEY_USAGE"},
-    {MBEDTLS_X509_BADCERT_EXT_KEY_USAGE, "MBEDTLS_X509_BADCERT_EXT_KEY_USAGE"},
-    {MBEDTLS_X509_BADCERT_NS_CERT_TYPE, "MBEDTLS_X509_BADCERT_NS_CERT_TYPE"},
-    {MBEDTLS_X509_BADCERT_BAD_MD, "MBEDTLS_X509_BADCERT_BAD_MD"},
-    {MBEDTLS_X509_BADCERT_BAD_PK, "MBEDTLS_X509_BADCERT_BAD_PK"},
-    {MBEDTLS_X509_BADCERT_BAD_KEY, "MBEDTLS_X509_BADCERT_BAD_KEY"},
-    {MBEDTLS_X509_BADCRL_BAD_MD, "MBEDTLS_X509_BADCRL_BAD_MD"},
-    {MBEDTLS_X509_BADCRL_BAD_PK, "MBEDTLS_X509_BADCRL_BAD_PK"},
-    {MBEDTLS_X509_BADCRL_BAD_KEY, "MBEDTLS_X509_BADCRL_BAD_KEY"},
-};
 
 
 #if !defined(ARRAY_SIZE)
@@ -1130,149 +1024,6 @@ X509_verify_table[] =
  */
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 #endif
-
-char* SSL_get_verify_result_string(int rc)
-{
-    int i;
-    char* retstring = "undef";
-
-    for (i = 0; i < ARRAY_SIZE(X509_message_table); ++i)
-    {
-        if (X509_message_table[i].code == rc)
-        {
-            retstring = X509_message_table[i].string;
-            break;
-        }
-    }
-    return retstring;
-}
-
-
-void SSL_CTX_info_callback(const SSL* ssl, int where, int ret)
-{
-    if (where & SSL_CB_LOOP)
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL state %s:%s:%s",
-                  (where & SSL_ST_CONNECT) ? "connect" : (where & SSL_ST_ACCEPT) ? "accept" : "undef",
-                    SSL_state_string_long(ssl), SSL_get_cipher_name(ssl));
-    }
-    else if (where & SSL_CB_EXIT)
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL %s:%s",
-                  (where & SSL_ST_CONNECT) ? "connect" : (where & SSL_ST_ACCEPT) ? "accept" : "undef",
-                    SSL_state_string_long(ssl));
-    }
-    else if (where & SSL_CB_ALERT)
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL alert %s:%s:%s",
-                  (where & SSL_CB_READ) ? "read" : "write",
-                    SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret));
-    }
-    else if (where & SSL_CB_HANDSHAKE_START)
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL handshake started %s:%s:%s",
-                  (where & SSL_CB_READ) ? "read" : "write",
-                    SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret));
-    }
-    else if (where & SSL_CB_HANDSHAKE_DONE)
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL handshake done %s:%s:%s",
-                  (where & SSL_CB_READ) ? "read" : "write",
-                    SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret));
-        Log(TRACE_PROTOCOL, 1, "SSL certificate verification: %s",
-                    SSL_get_verify_result_string(SSL_get_verify_result(ssl)));
-    }
-    else
-    {
-        Log(TRACE_PROTOCOL, 1, "SSL state %s:%s:%s", SSL_state_string_long(ssl),
-                   SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret));
-    }
-}
-
-
-char* SSLSocket_get_version_string(int version)
-{
-    int i;
-    static char buf[20];
-    char* retstring = NULL;
-    static struct
-    {
-        int code;
-        char* string;
-    }
-    version_string_table[] =
-    {
-        { MBEDTLS_SSL_MINOR_VERSION_0, "SSL 3.0" },
-        { MBEDTLS_SSL_MINOR_VERSION_1, "TLS 1.0" },
-        { MBEDTLS_SSL_MINOR_VERSION_2, "TLS 1.1" },
-        { MBEDTLS_SSL_MINOR_VERSION_3, "TLS 1.2" },
-    };
-
-    for (i = 0; i < ARRAY_SIZE(version_string_table); ++i)
-    {
-        if (version_string_table[i].code == version)
-        {
-            retstring = version_string_table[i].string;
-            break;
-        }
-    }
-
-    if (retstring == NULL)
-    {
-        sprintf(buf, "%i", version);
-        retstring = buf;
-    }
-    return retstring;
-}
-
-
-void SSL_CTX_msg_callback(int write_p, int version, int content_type, const void* buf, size_t len,
-        SSL* ssl, void* arg)
-{
-
-/*
-called by the SSL/TLS library for a protocol message, the function arguments have the following meaning:
-
-write_p
-This flag is 0 when a protocol message has been received and 1 when a protocol message has been sent.
-
-version
-The protocol version according to which the protocol message is interpreted by the library. Currently, this is one of SSL2_VERSION, SSL3_VERSION and TLS1_VERSION (for SSL 2.0, SSL 3.0 and TLS 1.0, respectively).
-
-content_type
-In the case of SSL 2.0, this is always 0. In the case of SSL 3.0 or TLS 1.0, this is one of the ContentType values defined in the protocol specification (change_cipher_spec(20), alert(21), handshake(22); but never application_data(23) because the callback will only be called for protocol messages).
-
-buf, len
-buf points to a buffer containing the protocol message, which consists of len bytes. The buffer is no longer valid after the callback function has returned.
-
-ssl
-The SSL object that received or sent the message.
-
-arg
-The user-defined argument optionally defined by SSL_CTX_set_msg_callback_arg() or SSL_set_msg_callback_arg().
-
-*/
-
-    Log(TRACE_PROTOCOL, -1, "%s %s %d buflen %d", (write_p ? "sent" : "received"),
-        SSLSocket_get_version_string(version),
-        content_type, (int)len);
-}
-
-
-int pem_passwd_cb(char* buf, int size, int rwflag, void* userdata)
-{
-    int rc = 0;
-
-    FUNC_ENTRY;
-    if (!rwflag)
-    {
-        strncpy(buf, (char*)(userdata), size);
-        buf[size-1] = '\0';
-        rc = (int)strlen(buf);
-    }
-    FUNC_EXIT_RC(rc);
-    return rc;
-}
 
 
 void SSLSocket_handleOpensslInit(int bool_value)
@@ -1299,7 +1050,7 @@ void SSLSocket_terminate(void)
 
 int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 {
-    int rc = 1;
+    int rc = 0;
     /* RNG related string */
     const char personalization[] = "paho_mbedtls_entropy";
 
@@ -1434,47 +1185,34 @@ exit:
 int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
     const char* hostname, size_t hostname_len)
 {
-    int rc = 1;
+    int rc = 0;
 
     FUNC_ENTRY;
 
-    if (net->ctx != NULL || (rc = SSLSocket_createContext(net, opts)) == 1)
+    if (net->ctx != NULL || (rc = SSLSocket_createContext(net, opts)) == 0)
     {
         char *hostname_plus_null;
         int i;
 
-        SSL_CTX_set_info_callback(net->ctx, SSL_CTX_info_callback);
-        SSL_CTX_set_msg_callback(net->ctx, SSL_CTX_msg_callback);
-        if (opts->enableServerCertAuth)
-            SSL_CTX_set_verify(net->ctx, SSL_VERIFY_PEER, NULL);
-
-        net->ssl = SSL_new(net->ctx);
-
-        /* Log all ciphers available to the SSL sessions (loaded in ctx) */
-        for (i = 0; ;i++)
-        {
-            const char* cipher = SSL_get_cipher_list(net->ssl, i);
-            if (cipher == NULL)
-                break;
-            Log(TRACE_PROTOCOL, 1, "SSL cipher available: %d:%s", i, cipher);
+        if ((rc = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
+          log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", rc);
+          goto exit;
         }
-        if ((rc = SSL_set_fd(net->ssl, net->socket)) != 1) {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_set_fd", net->ssl, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_set_fd", net->ssl, net->socket, rc, NULL, NULL);
-        }
+
         hostname_plus_null = malloc(hostname_len + 1u );
         MQTTStrncpy(hostname_plus_null, hostname, hostname_len + 1u);
-        if ((rc = SSL_set_tlsext_host_name(net->ssl, hostname_plus_null)) != 1) {
-            if (opts->struct_version >= 3)
-                SSLSocket_error("SSL_set_tlsext_host_name", NULL, net->socket, rc, opts->ssl_error_cb, opts->ssl_error_context);
-            else
-                SSLSocket_error("SSL_set_tlsext_host_name", NULL, net->socket, rc, NULL, NULL);
+        if((rc = mbedtls_ssl_set_hostname(net->ssl, hostname_plus_null)) != 0)
+        {
+            log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", rc);
+            free(hostname_plus_null);
+            goto exit;
         }
         free(hostname_plus_null);
-    }
 
+        mbedtls_ssl_set_bio(net->ssl, net->socket, mbedtls_net_send, mbedtls_net_recv, NULL );
+
+    }
+exit:
     FUNC_EXIT_RC(rc);
     return rc;
 }
