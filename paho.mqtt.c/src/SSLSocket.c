@@ -1226,41 +1226,43 @@ int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int 
 
     FUNC_ENTRY;
 
-    rc = SSL_connect(ssl);
-    if (rc != 1)
+    while( ( rc = mbedtls_ssl_handshake( &ssl ) ) != 0 )
     {
-        int error;
-        error = SSLSocket_error("SSL_connect", ssl, sock, rc, cb, u);
-        if (error == SSL_FATAL)
-            rc = error;
-        if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
-            rc = TCPSOCKET_INTERRUPTED;
-    }
-#if (OPENSSL_VERSION_NUMBER >= 0x010002000) /* 1.0.2 and later */
-    else if (verify == 1)
-    {
-        char* peername = NULL;
-        int port;
-        size_t hostname_len;
+        if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
+            ret != MBEDTLS_ERR_SSL_WANT_WRITE &&
+            ret != MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS )
+        {
+            mbedtls_printf( " failed\n  ! mbedtls_ssl_handshake returned -0x%x\n",
+                            -ret );
+            if( ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED )
+                mbedtls_printf(
+                    "    Unable to verify the server's certificate. "
+                        "Either it is invalid,\n"
+                    "    or you didn't set ca_file or ca_path "
+                        "to an appropriate value.\n"
+                    "    Alternatively, you may want to use "
+                        "auth_mode=optional for testing purposes.\n" );
+            mbedtls_printf( "\n" );
+            goto exit;
+        }
 
-        X509* cert = SSL_get_peer_certificate(ssl);
-        hostname_len = MQTTProtocol_addressPort(hostname, &port, NULL);
-
-        rc = X509_check_host(cert, hostname, hostname_len, 0, &peername);
-        Log(TRACE_MIN, -1, "rc from X509_check_host is %d", rc);
-        Log(TRACE_MIN, -1, "peername from X509_check_host is %s", peername);
-
-        if (peername != NULL)
-            OPENSSL_free(peername);
-
-        // 0 == fail, -1 == SSL internal error
-        if (rc == 0 || rc == -1)
-            rc = SSL_FATAL;
-
-        if (cert)
-            X509_free(cert);
-    }
+#if defined(MBEDTLS_ECP_RESTARTABLE)
+        if( ret == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS )
+            continue;
 #endif
+
+        /* For event-driven IO, wait for socket to become available */
+        if( opt.event == 1 /* level triggered IO */ )
+        {
+#if defined(MBEDTLS_TIMING_C)
+            ret = idle( &server_fd, &timer, ret );
+#else
+            ret = idle( &server_fd, ret );
+#endif
+            if( ret != 0 )
+                goto exit;
+        }
+    }
 
     FUNC_EXIT_RC(rc);
     return rc;

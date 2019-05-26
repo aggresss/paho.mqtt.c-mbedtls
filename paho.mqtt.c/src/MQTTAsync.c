@@ -65,6 +65,10 @@
 #include "OsWrapper.h"
 #include "WebSocket.h"
 
+#if defined(MBEDTLS)
+#include <mbedtls/version.h>
+#endif
+
 #define URI_TCP "tcp://"
 #define URI_WS  "ws://"
 #define URI_WSS "wss://"
@@ -2748,7 +2752,7 @@ int MQTTAsync_connect(MQTTAsync handle, const MQTTAsync_connectOptions* options)
 		goto exit;
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (m->ssl && options->ssl == NULL)
 	{
 		rc = MQTTCLIENT_NULL_PARAMETER;
@@ -2887,7 +2891,7 @@ int MQTTAsync_connect(MQTTAsync handle, const MQTTAsync_connectOptions* options)
 		m->c->will->topic = MQTTStrdup(options->will->topicName);
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (m->c->sslopts)
 	{
 		if (m->c->sslopts->trustStore)
@@ -3524,7 +3528,7 @@ static int MQTTAsync_connecting(MQTTAsyncs* m)
 
 		Socket_clearPendingWrite(m->c->net.socket);
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		if (m->ssl)
 		{
 			int port;
@@ -3600,11 +3604,11 @@ static int MQTTAsync_connecting(MQTTAsyncs* m)
 						m->connectProps, m->willProps)) == SOCKET_ERROR)
 					goto exit;
 			}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		}
 #endif
 	}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	else if (m->c->connect_state == SSL_IN_PROGRESS) /* SSL connect sent - wait for completion */
 	{
 		rc = m->c->sslopts->struct_version >= 3 ?
@@ -3667,7 +3671,7 @@ static MQTTPacket* MQTTAsync_cycle(int* sock, unsigned long timeout, int* rc)
 		tp.tv_usec = (timeout % 1000) * 1000; /* this field is microseconds! */
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if ((*sock = SSLSocket_getPendingRead()) == -1)
 	{
 #endif
@@ -3675,7 +3679,7 @@ static MQTTPacket* MQTTAsync_cycle(int* sock, unsigned long timeout, int* rc)
 		*sock = Socket_getReadySocket(0, &tp,socket_mutex);
 		if (!tostop && *sock == 0 && (tp.tv_sec > 0L || tp.tv_usec > 0L))
 			MQTTAsync_sleep(100L);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	}
 #endif
 	MQTTAsync_lock_mutex(mqttasync_mutex);
@@ -4014,6 +4018,12 @@ MQTTAsync_nameValue* MQTTAsync_getVersionInfo(void)
 
 	libinfo[i].name = "OpenSSL directory";
 	libinfo[i++].value = SSLeay_version(SSLEAY_DIR);
+#endif
+#if defined(MBEDTLS)
+	char mbedtlsVersion[30] = {0};
+	mbedtls_version_get_string(mbedtlsVersion);
+    libinfo[i].name = "MbedTLS Version";
+    libinfo[i++].value = mbedtlsVersion;
 #endif
 	libinfo[i].name = NULL;
 	libinfo[i].value = NULL;

@@ -69,7 +69,7 @@
 
 #if defined(OPENSSL) || defined(MBEDTLS)
 #include "SSLSocket.h"
-#endif /* defined(OPENSSL) */
+#endif /* defined(OPENSSL) || defined(MBEDTLS)*/
 #include "Socket.h"
 
 #if !(defined(WIN32) || defined(WIN64))

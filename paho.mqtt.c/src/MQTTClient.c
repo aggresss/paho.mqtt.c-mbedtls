@@ -65,6 +65,9 @@
 
 #if defined(OPENSSL)
 #include <openssl/ssl.h>
+#elif defined(MBEDTLS)
+#include <mbedtls/version.h>
+#include "Clients.h"
 #else
 #define URI_SSL "ssl://"
 #endif
@@ -83,7 +86,7 @@ const char *client_version_eye = "MQTTClientV3_Version " CLIENT_VERSION;
 
 void MQTTClient_global_init(MQTTClient_init_options* inits)
 {
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	SSLSocket_handleOpensslInit(inits->do_openssl_init);
 #endif
 }
@@ -195,7 +198,7 @@ typedef struct
 typedef struct
 {
 	char* serverURI;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	int ssl;
 #endif
 	int websocket;
@@ -356,7 +359,7 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
 	{
 		if (strncmp(URI_TCP, serverURI, strlen(URI_TCP)) != 0
 		 && strncmp(URI_WS, serverURI, strlen(URI_WS)) != 0
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
             && strncmp(URI_SSL, serverURI, strlen(URI_SSL)) != 0
 		 && strncmp(URI_WSS, serverURI, strlen(URI_WSS)) != 0
 #endif
@@ -383,7 +386,7 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
 		Socket_outInitialize();
 		Socket_setWriteCompleteCallback(MQTTClient_writeComplete);
 		handles = ListInitialize();
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		SSLSocket_initialize();
 #endif
 		library_initialized = 1;
@@ -401,7 +404,7 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
 	}
 	else if (strncmp(URI_SSL, serverURI, strlen(URI_SSL)) == 0)
 	{
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		serverURI += strlen(URI_SSL);
 		m->ssl = 1;
 #else
@@ -411,7 +414,7 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
 	}
 	else if (strncmp(URI_WSS, serverURI, strlen(URI_WSS)) == 0)
 	{
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		serverURI += strlen(URI_WSS);
 		m->ssl = 1;
 		m->websocket = 1;
@@ -879,7 +882,7 @@ static thread_return_type WINAPI MQTTClient_run(void* n)
 				Log(TRACE_MIN, -1, "Posting connect semaphore for client %s rc %d", m->c->clientID, m->rc);
 				Thread_post_sem(m->connect_sem);
 			}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 			else if (m->c->connect_state == SSL_IN_PROGRESS)
 			{
 				rc = m->c->sslopts->struct_version >= 3 ?
@@ -993,13 +996,13 @@ static void MQTTClient_closeSession(Clients* client, enum MQTTReasonCodes reason
 		Thread_lock_mutex(socket_mutex);
 		WebSocket_close(&client->net, WebSocket_CLOSE_NORMAL, NULL);
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		SSLSocket_close(&client->net);
 #endif
 		Socket_close(client->net.socket);
 		Thread_unlock_mutex(socket_mutex);
 		client->net.socket = 0;
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		client->net.ssl = NULL;
 #endif
 	}
@@ -1100,7 +1103,7 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 	}
 
 	Log(TRACE_MIN, -1, "Connecting to serverURI %s with MQTT version %d", serverURI, MQTTVersion);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	rc = MQTTProtocol_connect(serverURI, m->c, m->ssl, m->websocket, MQTTVersion, connectProperties, willProperties);
 #else
 	rc = MQTTProtocol_connect(serverURI, m->c, m->websocket, MQTTVersion, connectProperties, willProperties);
@@ -1124,7 +1127,7 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 			rc = SOCKET_ERROR;
 			goto exit;
 		}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 		if (m->ssl)
 		{
 			int port;
@@ -1203,7 +1206,7 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 		}
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (m->c->connect_state == SSL_IN_PROGRESS) /* SSL connect sent - wait for completion */
 	{
 		Thread_unlock_mutex(mqttclient_mutex);
@@ -1398,7 +1401,7 @@ static MQTTResponse MQTTClient_connectURI(MQTTClient handle, MQTTClient_connectO
 		m->c->will->topic = MQTTStrdup(options->will->topicName);
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (m->c->sslopts)
 	{
 		if (m->c->sslopts->trustStore)
@@ -1548,7 +1551,7 @@ MQTTResponse MQTTClient_connectAll(MQTTClient handle, MQTTClient_connectOptions*
 		goto exit;
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (m->ssl && options->ssl == NULL)
 	{
 		rc.reasonCode = MQTTCLIENT_NULL_PARAMETER;
@@ -1566,7 +1569,7 @@ MQTTResponse MQTTClient_connectAll(MQTTClient handle, MQTTClient_connectOptions*
 	}
 
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if (options->struct_version != 0 && options->ssl) /* check validity of SSL options structure */
 	{
 		if (strncmp(options->ssl->struct_id, "MQTS", 4) != 0 || options->ssl->struct_version < 0 || options->ssl->struct_version > 3)
@@ -1629,7 +1632,7 @@ MQTTResponse MQTTClient_connectAll(MQTTClient handle, MQTTClient_connectOptions*
 				serverURI += strlen(URI_WS);
 				m->websocket = 1;
 			}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 			else if (strncmp(URI_SSL, serverURI, strlen(URI_SSL)) == 0)
 			{
 				serverURI += strlen(URI_SSL);
@@ -2275,13 +2278,13 @@ static MQTTPacket* MQTTClient_cycle(int* sock, unsigned long timeout, int* rc)
 		tp.tv_usec = (timeout % 1000) * 1000; /* this field is microseconds! */
 	}
 
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	if ((*sock = SSLSocket_getPendingRead()) == -1)
 	{
 		/* 0 from getReadySocket indicates no work to do, -1 == error, but can happen normally */
 #endif
 		*sock = Socket_getReadySocket(0, &tp, socket_mutex);
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 	}
 #endif
 	Thread_lock_mutex(mqttclient_mutex);
@@ -2411,7 +2414,7 @@ static MQTTPacket* MQTTClient_waitfor(MQTTClient handle, int packet_type, int* r
 						*rc = error;
 					break;
 				}
-#if defined(OPENSSL)
+#if defined(OPENSSL) || defined(MBEDTLS)
 				else if (m->c->connect_state == SSL_IN_PROGRESS)
 				{
 					*rc = m->c->sslopts->struct_version >= 3 ?
@@ -2680,6 +2683,12 @@ MQTTClient_nameValue* MQTTClient_getVersionInfo(void)
 
 	libinfo[i].name = "OpenSSL directory";
 	libinfo[i++].value = SSLeay_version(SSLEAY_DIR);
+#endif
+#if defined(MBEDTLS)
+    char mbedtlsVersion[30] = {0};
+    mbedtls_version_get_string(mbedtlsVersion);
+    libinfo[i].name = "MbedTLS Version";
+    libinfo[i++].value = mbedtlsVersion;
 #endif
 	libinfo[i].name = NULL;
 	libinfo[i].value = NULL;
