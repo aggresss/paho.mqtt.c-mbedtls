@@ -893,7 +893,14 @@ static thread_return_type WINAPI MQTTClient_run(void* n)
 				if (rc == 1 || rc == SSL_FATAL)
 				{
 					if (rc == 1 && (m->c->cleansession == 0 && m->c->cleanstart == 0) && m->c->session == NULL)
-						m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+                        m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+					    mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 					m->rc = rc;
 					Log(TRACE_MIN, -1, "Posting connect semaphore for SSL client %s rc %d", m->c->clientID, m->rc);
 					Thread_post_sem(m->connect_sem);
@@ -1142,7 +1149,15 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 			if (setSocketForSSLrc != MQTTCLIENT_SUCCESS)
 			{
 				if (m->c->session != NULL)
-					if ((rc = SSL_set_session(m->c->net.ssl, m->c->session)) != 1)
+
+#endif
+#if defined(OPENSSL)
+				    if ((rc = SSL_set_session(m->c->net.ssl, m->c->session)) != 1)
+#endif
+#if defined(MBEDTLS)
+				    if ((rc = mbedtls_ssl_set_session(m->c->net.ssl, m->c->session)) != 0)
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 						Log(TRACE_MIN, -1, "Failed to set SSL session with stored data, non critical");
 				rc = m->c->sslopts->struct_version >= 3 ?
 					SSLSocket_connect(m->c->net.ssl, m->c->net.socket, m->serverURI,
@@ -1175,7 +1190,14 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 							goto exit;
 						}
 						if ((m->c->cleansession == 0 && m->c->cleanstart == 0) && m->c->session == NULL)
-							m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+                        m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+                        mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 					}
 				}
 			}
@@ -1218,7 +1240,14 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 			goto exit;
 		}
 		if((m->c->cleansession == 0 && m->c->cleanstart == 0) && m->c->session == NULL)
-			m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+                        m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+                        mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 
 		if ( m->websocket )
 		{
@@ -2427,7 +2456,14 @@ static MQTTPacket* MQTTClient_waitfor(MQTTClient handle, int packet_type, int* r
 					else if (*rc == 1) /* rc == 1 means SSL connect has finished and succeeded */
 					{
 						if ((m->c->cleansession == 0 && m->c->cleanstart == 0) && m->c->session == NULL)
-							m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+                        m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+                        mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 						break;
 					}
 				}

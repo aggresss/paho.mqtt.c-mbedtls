@@ -1004,6 +1004,8 @@ int SSLSocket_continueWrite(pending_writes* pw)
 #include <mbedtls/entropy.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/platform.h>
 
 extern Sockets s;
 static ssl_mutex_type sslCoreMutex;
@@ -1123,7 +1125,7 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 
     if (net->ctx == NULL)
     {
-        net->ctx = (SSL_CTX*)mbedtls_calloc(sizeof(SSL_CTX), 1);
+        net->ctx = (SSL_CTX*)mbedtls_calloc(1, sizeof(SSL_CTX));
         if (net->ctx == NULL)
         {
             Log(TRACE_PROTOCOL, -1, "allocate context failed.");
@@ -1258,7 +1260,7 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
         char *hostname_plus_null;
         int i;
         if (net->ssl == NULL) {
-            net->ssl = mbedtls_calloc(sizeof(mbedtls_ssl_context));
+            net->ssl = mbedtls_calloc(1, sizeof(mbedtls_ssl_context));
             if (net->ssl == NULL)
             {
                 Log(TRACE_PROTOCOL, -1, "allocate ssl context failed.");
@@ -1267,7 +1269,7 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
             mbedtls_ssl_init(net->ssl);
         }
         if ((rc = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
-          log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", rc);
+          Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", rc);
           goto free_ssl;
         }
 
@@ -1275,13 +1277,13 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
         MQTTStrncpy(hostname_plus_null, hostname, hostname_len + 1u);
         if((rc = mbedtls_ssl_set_hostname(net->ssl, hostname_plus_null)) != 0)
         {
-            log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", rc);
+            Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", rc);
             free(hostname_plus_null);
             goto free_ssl;
         }
         free(hostname_plus_null);
 
-        mbedtls_ssl_set_bio(net->ssl, net->socket, mbedtls_net_send, mbedtls_net_recv, NULL );
+        mbedtls_ssl_set_bio(net->ssl, &net->socket, mbedtls_net_send, mbedtls_net_recv, NULL );
     }
     goto exit;
 free_ssl:
@@ -1314,7 +1316,7 @@ int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int 
         /* handshake complete check server certificate */
         if (verify == 1) {
             char vrfy_buf[512];
-            if( ( flags = mbedtls_ssl_get_verify_result(&ssl)) != 0 ) {
+            if( ( flags = mbedtls_ssl_get_verify_result(ssl)) != 0 ) {
                 mbedtls_x509_crt_verify_info( vrfy_buf, sizeof( vrfy_buf ), NULL, flags);
                 Log(TRACE_PROTOCOL, -1, "failed! %s", vrfy_buf);
                 rc = -1;
@@ -1322,7 +1324,7 @@ int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int 
         }
     } else {
         rc = -1;
-        log(TRACE_PROTOCOL, -1, "failed! mbedtls_ssl_handshake returned -0x%x\n", ret_state);
+        Log(TRACE_PROTOCOL, -1, "failed! mbedtls_ssl_handshake returned -0x%x\n", ret_state);
     }
     FUNC_EXIT_RC(rc);
     return rc;
@@ -1416,7 +1418,7 @@ char *SSLSocket_getdata(SSL* ssl, int socket, size_t bytes, size_t* actual_len)
         isn't picked up by select.  So here we should check for any data remaining in the SSL buffer, and
         if so, add this socket to a new "pending SSL reads" list.
         */
-        if (SSL_pending(ssl) > 0) /* return no of bytes pending */
+        if (mbedtls_ssl_get_bytes_avail(ssl) > 0) /* return no of bytes pending */
             SSLSocket_addPendingRead(socket);
     }
     else /* we didn't read the whole packet */
@@ -1459,7 +1461,7 @@ int SSLSocket_close(networkHandles* net)
     {
         rc = mbedtls_ssl_close_notify(net->ssl);
         mbedtls_ssl_free(net->ssl);
-        mbetls_free(net->ssl);
+        mbedtls_free(net->ssl);
         net->ssl = NULL;
     }
     SSLSocket_destroyContext(net);

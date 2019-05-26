@@ -3542,7 +3542,14 @@ static int MQTTAsync_connecting(MQTTAsyncs* m)
 			if (setSocketForSSLrc != MQTTASYNC_SUCCESS)
 			{
 				if (m->c->session != NULL)
-					if ((rc = SSL_set_session(m->c->net.ssl, m->c->session)) != 1)
+#endif
+#if defined(OPENSSL)
+                    if ((rc = SSL_set_session(m->c->net.ssl, m->c->session)) != 1)
+#endif
+#if defined(MBEDTLS)
+                    if ((rc = mbedtls_ssl_set_session(m->c->net.ssl, m->c->session)) != 0)
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 						Log(TRACE_MIN, -1, "Failed to set SSL session with stored data, non critical");
 				rc = m->c->sslopts->struct_version >= 3 ?
 					SSLSocket_connect(m->c->net.ssl, m->c->net.socket, m->serverURI,
@@ -3579,7 +3586,14 @@ static int MQTTAsync_connecting(MQTTAsyncs* m)
 						}
 					}
 					if (!m->c->cleansession && m->c->session == NULL)
-						m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+                        m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+                        mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 				}
 			}
 			else
@@ -3620,7 +3634,14 @@ static int MQTTAsync_connecting(MQTTAsyncs* m)
 			goto exit;
 
 		if(!m->c->cleansession && m->c->session == NULL)
-			m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(OPENSSL)
+		    m->c->session = SSL_get1_session(m->c->net.ssl);
+#endif
+#if defined(MBEDTLS)
+		    mbedtls_ssl_get_session(m->c->net.ssl, m->c->session);
+#endif
+#if defined(OPENSSL) || defined(MBEDTLS)
 
 		if ( m->websocket )
 		{
