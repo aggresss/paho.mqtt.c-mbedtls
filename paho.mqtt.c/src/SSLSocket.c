@@ -1125,7 +1125,7 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 
     if (net->ctx == NULL)
     {
-        net->ctx = (SSL_CTX*)mbedtls_calloc(1, sizeof(SSL_CTX));
+        net->ctx = (SSL_CTX*)malloc(sizeof(SSL_CTX));
         if (net->ctx == NULL)
         {
             Log(TRACE_PROTOCOL, -1, "allocate context failed.");
@@ -1260,7 +1260,7 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
         char *hostname_plus_null;
         int i;
         if (net->ssl == NULL) {
-            net->ssl = mbedtls_calloc(1, sizeof(mbedtls_ssl_context));
+            net->ssl = malloc(sizeof(mbedtls_ssl_context));
             if (net->ssl == NULL)
             {
                 Log(TRACE_PROTOCOL, -1, "allocate ssl context failed.");
@@ -1287,7 +1287,7 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
     }
     goto exit;
 free_ssl:
-    mbedtls_free(net->ssl);
+    free(net->ssl);
 exit:
     FUNC_EXIT_RC(rc);
     return rc;
@@ -1441,7 +1441,7 @@ void SSLSocket_destroyContext(networkHandles* net)
         mbedtls_x509_crt_free(&net->ctx->cacert);
         mbedtls_x509_crt_free(&net->ctx->clicert);
         mbedtls_pk_free(&net->ctx->pkey);
-        mbedtls_free(net->ctx);
+        free(net->ctx);
         net->ctx = NULL;
     FUNC_EXIT;
 }
