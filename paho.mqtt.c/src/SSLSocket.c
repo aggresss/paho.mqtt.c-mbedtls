@@ -1006,8 +1006,12 @@ int SSLSocket_continueWrite(pending_writes* pw)
 #include <mbedtls/x509.h>
 
 extern Sockets s;
+static ssl_mutex_type sslCoreMutex;
 
-
+static int SSL_create_mutex(ssl_mutex_type* mutex);
+static int SSL_lock_mutex(ssl_mutex_type* mutex);
+static int SSL_unlock_mutex(ssl_mutex_type* mutex);
+static void SSL_destroy_mutex(ssl_mutex_type* mutex);
 static int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
 static void SSLSocket_destroyContext(networkHandles* net);
 static void SSLSocket_addPendingRead(int sock);
@@ -1026,6 +1030,63 @@ static void SSLSocket_addPendingRead(int sock);
 #endif
 
 
+static int SSL_create_mutex(ssl_mutex_type* mutex)
+{
+    int rc = 0;
+
+    FUNC_ENTRY;
+#if defined(WIN32) || defined(WIN64)
+    *mutex = CreateMutex(NULL, 0, NULL);
+#else
+    rc = pthread_mutex_init(mutex, NULL);
+#endif
+    FUNC_EXIT_RC(rc);
+    return rc;
+}
+
+static int SSL_lock_mutex(ssl_mutex_type* mutex)
+{
+    int rc = -1;
+
+    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
+#if defined(WIN32) || defined(WIN64)
+    if (WaitForSingleObject(*mutex, INFINITE) != WAIT_FAILED)
+#else
+    if ((rc = pthread_mutex_lock(mutex)) == 0)
+#endif
+    rc = 0;
+
+    return rc;
+}
+
+static int SSL_unlock_mutex(ssl_mutex_type* mutex)
+{
+    int rc = -1;
+
+    /* don't add entry/exit trace points, as trace gets lock too, and it might happen quite frequently  */
+#if defined(WIN32) || defined(WIN64)
+    if (ReleaseMutex(*mutex) != 0)
+#else
+    if ((rc = pthread_mutex_unlock(mutex)) == 0)
+#endif
+    rc = 0;
+
+    return rc;
+}
+
+static void SSL_destroy_mutex(ssl_mutex_type* mutex)
+{
+    int rc = 0;
+
+    FUNC_ENTRY;
+#if defined(WIN32) || defined(WIN64)
+    rc = CloseHandle(*mutex);
+#else
+    rc = pthread_mutex_destroy(mutex);
+#endif
+    FUNC_EXIT_RC(rc);
+}
+
 void SSLSocket_handleOpensslInit(int bool_value)
 {
     return;
@@ -1037,6 +1098,8 @@ int SSLSocket_initialize(void)
     int rc = 0;
     FUNC_ENTRY;
 
+    SSL_create_mutex(&sslCoreMutex);
+
     FUNC_EXIT_RC(rc);
     return rc;
 }
@@ -1044,6 +1107,8 @@ int SSLSocket_initialize(void)
 void SSLSocket_terminate(void)
 {
     FUNC_ENTRY;
+
+    SSL_destroy_mutex(&sslCoreMutex);
 
     FUNC_EXIT;
 }
@@ -1059,7 +1124,6 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
     if (net->ctx == NULL)
     {
         net->ctx = (SSL_CTX*)mbedtls_calloc(sizeof(SSL_CTX), 1);
-
         if (net->ctx == NULL)
         {
             Log(TRACE_PROTOCOL, -1, "allocate context failed.");
@@ -1193,10 +1257,18 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
     {
         char *hostname_plus_null;
         int i;
-
+        if (net->ssl == NULL) {
+            net->ssl = mbedtls_calloc(sizeof(mbedtls_ssl_context));
+            if (net->ssl == NULL)
+            {
+                Log(TRACE_PROTOCOL, -1, "allocate ssl context failed.");
+                goto exit;
+            }
+            mbedtls_ssl_init(net->ssl);
+        }
         if ((rc = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
           log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", rc);
-          goto exit;
+          goto free_ssl;
         }
 
         hostname_plus_null = malloc(hostname_len + 1u );
@@ -1205,13 +1277,15 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
         {
             log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", rc);
             free(hostname_plus_null);
-            goto exit;
+            goto free_ssl;
         }
         free(hostname_plus_null);
 
         mbedtls_ssl_set_bio(net->ssl, net->socket, mbedtls_net_send, mbedtls_net_recv, NULL );
-
     }
+    goto exit;
+free_ssl:
+    mbedtls_free(net->ssl);
 exit:
     FUNC_EXIT_RC(rc);
     return rc;
@@ -1222,52 +1296,37 @@ exit:
  */
 int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int (*cb)(const char *str, size_t len, void *u), void* u)
 {
-    int rc = 0;
+    int rc = 1;
+    int ret_state = 0;
+    int flags = 0;
 
     FUNC_ENTRY;
 
-    while( ( rc = mbedtls_ssl_handshake( &ssl ) ) != 0 )
+    ret_state = mbedtls_ssl_handshake(ssl);
+
+    if(ret_state == MBEDTLS_ERR_SSL_WANT_READ ||
+            ret_state == MBEDTLS_ERR_SSL_WANT_WRITE ||
+            ret_state == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+            ret_state == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS)
     {
-        if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
-            ret != MBEDTLS_ERR_SSL_WANT_WRITE &&
-            ret != MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS )
-        {
-            mbedtls_printf( " failed\n  ! mbedtls_ssl_handshake returned -0x%x\n",
-                            -ret );
-            if( ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED )
-                mbedtls_printf(
-                    "    Unable to verify the server's certificate. "
-                        "Either it is invalid,\n"
-                    "    or you didn't set ca_file or ca_path "
-                        "to an appropriate value.\n"
-                    "    Alternatively, you may want to use "
-                        "auth_mode=optional for testing purposes.\n" );
-            mbedtls_printf( "\n" );
-            goto exit;
+        rc = TCPSOCKET_INTERRUPTED;
+    } else if (ret_state == 0) {
+        /* handshake complete check server certificate */
+        if (verify == 1) {
+            char vrfy_buf[512];
+            if( ( flags = mbedtls_ssl_get_verify_result(&ssl)) != 0 ) {
+                mbedtls_x509_crt_verify_info( vrfy_buf, sizeof( vrfy_buf ), NULL, flags);
+                Log(TRACE_PROTOCOL, -1, "failed! %s", vrfy_buf);
+                rc = -1;
+            }
         }
-
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-        if( ret == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS )
-            continue;
-#endif
-
-        /* For event-driven IO, wait for socket to become available */
-        if( opt.event == 1 /* level triggered IO */ )
-        {
-#if defined(MBEDTLS_TIMING_C)
-            ret = idle( &server_fd, &timer, ret );
-#else
-            ret = idle( &server_fd, ret );
-#endif
-            if( ret != 0 )
-                goto exit;
-        }
+    } else {
+        rc = -1;
+        log(TRACE_PROTOCOL, -1, "failed! mbedtls_ssl_handshake returned -0x%x\n", ret_state);
     }
-
     FUNC_EXIT_RC(rc);
     return rc;
 }
-
 
 
 /**
@@ -1279,23 +1338,25 @@ int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int 
 int SSLSocket_getch(SSL* ssl, int socket, char* c)
 {
     int rc = SOCKET_ERROR;
+    int ret_state = 0;
 
     FUNC_ENTRY;
     if ((rc = SocketBuffer_getQueuedChar(socket, c)) != SOCKETBUFFER_INTERRUPTED)
         goto exit;
 
-    if ((rc = SSL_read(ssl, c, (size_t)1)) < 0)
-    {
-        int err = SSLSocket_error("SSL_read - getch", ssl, socket, rc, NULL, NULL);
-        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
-        {
+    if ((ret_state = mbedtls_ssl_read(ssl, c, (size_t)1)) < 0) {
+        if(ret_state == MBEDTLS_ERR_SSL_WANT_READ ||
+                ret_state == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                ret_state == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                ret_state == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                ret_state == MBEDTLS_ERR_SSL_CLIENT_RECONNECT) {
             rc = TCPSOCKET_INTERRUPTED;
             SocketBuffer_interrupted(socket, 0);
         }
     }
-    else if (rc == 0)
+    else if (ret_state == 0)
         rc = SOCKET_ERROR;  /* The return value from recv is 0 when the peer has performed an orderly shutdown. */
-    else if (rc == 1)
+    else if (ret_state == 1)
     {
         SocketBuffer_queueChar(socket, *c);
         rc = TCPSOCKET_COMPLETE;
@@ -1304,7 +1365,6 @@ exit:
     FUNC_EXIT_RC(rc);
     return rc;
 }
-
 
 
 /**
@@ -1329,10 +1389,13 @@ char *SSLSocket_getdata(SSL* ssl, int socket, size_t bytes, size_t* actual_len)
 
     buf = SocketBuffer_getQueuedData(socket, bytes, actual_len);
 
-    if ((rc = SSL_read(ssl, buf + (*actual_len), (int)(bytes - (*actual_len)))) < 0)
+    if ((rc = mbedtls_ssl_read(ssl, buf + (*actual_len), (int)(bytes - (*actual_len)))) < 0)
     {
-        rc = SSLSocket_error("SSL_read - getdata", ssl, socket, rc, NULL, NULL);
-        if (rc != SSL_ERROR_WANT_READ && rc != SSL_ERROR_WANT_WRITE)
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
         {
             buf = NULL;
             goto exit;
@@ -1370,8 +1433,14 @@ void SSLSocket_destroyContext(networkHandles* net)
 {
     FUNC_ENTRY;
     if (net->ctx)
-        SSL_CTX_free(net->ctx);
-    net->ctx = NULL;
+        mbedtls_ssl_config_free(&net->ctx->conf);
+        mbedtls_ctr_drbg_free(&net->ctx->ctr_drbg);
+        mbedtls_entropy_free(&net->ctx->entropy);
+        mbedtls_x509_crt_free(&net->ctx->cacert);
+        mbedtls_x509_crt_free(&net->ctx->clicert);
+        mbedtls_pk_free(&net->ctx->pkey);
+        mbedtls_free(net->ctx);
+        net->ctx = NULL;
     FUNC_EXIT;
 }
 
@@ -1388,8 +1457,9 @@ int SSLSocket_close(networkHandles* net)
 
     if (net->ssl)
     {
-        rc = SSL_shutdown(net->ssl);
-        SSL_free(net->ssl);
+        rc = mbedtls_ssl_close_notify(net->ssl);
+        mbedtls_ssl_free(net->ssl);
+        mbetls_free(net->ssl);
         net->ssl = NULL;
     }
     SSLSocket_destroyContext(net);
@@ -1422,13 +1492,15 @@ int SSLSocket_putdatas(SSL* ssl, int socket, char* buf0, size_t buf0len, int cou
     }
 
     SSL_lock_mutex(&sslCoreMutex);
-    if ((rc = SSL_write(ssl, iovec.iov_base, iovec.iov_len)) == iovec.iov_len)
+    if ((rc = mbedtls_ssl_write(ssl, iovec.iov_base, iovec.iov_len)) == iovec.iov_len)
         rc = TCPSOCKET_COMPLETE;
     else
     {
-        sslerror = SSLSocket_error("SSL_write", ssl, socket, rc, NULL, NULL);
-
-        if (sslerror == SSL_ERROR_WANT_WRITE)
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
         {
             int* sockmem = (int*)malloc(sizeof(int));
             int free = 1;
@@ -1500,7 +1572,7 @@ int SSLSocket_continueWrite(pending_writes* pw)
     int rc = 0;
 
     FUNC_ENTRY;
-    if ((rc = SSL_write(pw->ssl, pw->iovecs[0].iov_base, pw->iovecs[0].iov_len)) == pw->iovecs[0].iov_len)
+    if ((rc = mbedtls_ssl_write(pw->ssl, pw->iovecs[0].iov_base, pw->iovecs[0].iov_len)) == pw->iovecs[0].iov_len)
     {
         /* topic and payload buffers are freed elsewhere, when all references to them have been removed */
         free(pw->iovecs[0].iov_base);
@@ -1509,8 +1581,11 @@ int SSLSocket_continueWrite(pending_writes* pw)
     }
     else
     {
-        int sslerror = SSLSocket_error("SSL_write", pw->ssl, pw->socket, rc, NULL, NULL);
-        if (sslerror == SSL_ERROR_WANT_WRITE)
+        if(rc == MBEDTLS_ERR_SSL_WANT_READ ||
+                rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                rc == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS ||
+                rc == MBEDTLS_ERR_SSL_CLIENT_RECONNECT)
             rc = 0; /* indicate we haven't finished writing the payload yet */
     }
     FUNC_EXIT_RC(rc);
