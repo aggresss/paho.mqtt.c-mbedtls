@@ -154,7 +154,7 @@ int main(int argc, char* argv[])
         conn_opts.ssl->trustStore = CERT_PATH"ca.crt";
         conn_opts.ssl->keyStore = CERT_PATH"client.crt";
         conn_opts.ssl->privateKey = CERT_PATH"client.key";
-        conn_opts.ssl->enableServerCertAuth = 1; /* verify server cert sign from CA */
+        conn_opts.ssl->enableServerCertAuth = 0; /* verify server cert sign from CA */
         conn_opts.ssl->verify = 0;  /* verify server cert CN(Conmon Name) */
 
         if ((rc = MQTTAsync_connect(client, &conn_opts)) != MQTTASYNC_SUCCESS)

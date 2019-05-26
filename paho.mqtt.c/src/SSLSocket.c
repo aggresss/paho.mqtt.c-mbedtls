@@ -1251,34 +1251,37 @@ exit:
 int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts,
     const char* hostname, size_t hostname_len)
 {
-    int rc = 0;
+    int rc = 1;
+    int ret_state = 0;
 
     FUNC_ENTRY;
 
-    if (net->ctx != NULL || (rc = SSLSocket_createContext(net, opts)) == 0)
+    if (net->ctx != NULL || (ret_state = SSLSocket_createContext(net, opts)) == 0)
     {
         char *hostname_plus_null;
-        int i;
         if (net->ssl == NULL) {
             net->ssl = malloc(sizeof(mbedtls_ssl_context));
             if (net->ssl == NULL)
             {
                 Log(TRACE_PROTOCOL, -1, "allocate ssl context failed.");
+                rc = -1;
                 goto exit;
             }
             mbedtls_ssl_init(net->ssl);
         }
-        if ((rc = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
-          Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", rc);
+        if ((ret_state = mbedtls_ssl_setup(net->ssl, &net->ctx->conf)) != 0) {
+          Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_setup returned %d", ret_state);
+          rc = -1;
           goto free_ssl;
         }
 
         hostname_plus_null = malloc(hostname_len + 1u );
         MQTTStrncpy(hostname_plus_null, hostname, hostname_len + 1u);
-        if((rc = mbedtls_ssl_set_hostname(net->ssl, hostname_plus_null)) != 0)
+        if((ret_state = mbedtls_ssl_set_hostname(net->ssl, hostname_plus_null)) != 0)
         {
-            Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", rc);
+            Log(TRACE_PROTOCOL, 1, "failed! mbedtls_ssl_set_hostname returned %d", ret_state);
             free(hostname_plus_null);
+            rc = -1;
             goto free_ssl;
         }
         free(hostname_plus_null);
