@@ -1089,6 +1089,27 @@ static void SSL_destroy_mutex(ssl_mutex_type* mutex)
     FUNC_EXIT_RC(rc);
 }
 
+/*
+ * custom verify on mbedtls, when ssl option verify is not set.
+ */
+static int SSL_verify_discard(void *data, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    char buf[512];
+    ((void) data);
+
+    if ((*flags) != 0) {
+        mbedtls_x509_crt_verify_info(buf, sizeof(buf), NULL, *flags);
+        Log(TRACE_PROTOCOL, 1,  "Warnning! flags:%d %s", *flags, buf);
+
+        /* Discard CN mismatch when ssl options verify unset */
+        if (*flags == MBEDTLS_X509_BADCERT_CN_MISMATCH) {
+            *flags = 0;
+        }
+    }
+
+    return (0);
+}
+
 void SSLSocket_handleOpensslInit(int bool_value)
 {
     return;
@@ -1226,6 +1247,11 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
         mbedtls_ssl_conf_authmode(&net->ctx->conf, MBEDTLS_SSL_VERIFY_NONE);
     }
 
+    /* custom mbedtls verify */
+    if (!opts->verify) {
+        mbedtls_ssl_conf_verify(&net->ctx->conf, SSL_verify_discard, NULL);
+    }
+
     if (opts->enabledCipherSuites)
     {
         /* TODO */
@@ -1317,14 +1343,8 @@ int SSLSocket_connect(SSL* ssl, int sock, const char* hostname, int verify, int 
         rc = TCPSOCKET_INTERRUPTED;
     } else if (ret_state == 0) {
         /* handshake complete check server certificate */
-        if (verify == 1) {
-            char vrfy_buf[512];
-            if( ( flags = mbedtls_ssl_get_verify_result(ssl)) != 0 ) {
-                mbedtls_x509_crt_verify_info( vrfy_buf, sizeof( vrfy_buf ), NULL, flags);
-                Log(TRACE_PROTOCOL, -1, "failed! %s", vrfy_buf);
-                rc = -1;
-            }
-        }
+        Log(TRACE_MAXIMUM, 1, "ssl handshake complete.");
+        rc = 1;
     } else {
         rc = -1;
         Log(TRACE_PROTOCOL, -1, "failed! mbedtls_ssl_handshake returned -0x%x\n", ret_state);
