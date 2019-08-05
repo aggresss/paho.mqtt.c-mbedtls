@@ -33,6 +33,8 @@
 #include <string.h>
 
 #include "MQTTProtocolClient.h"
+
+#define NO_PERSISTENCE 1
 #if !defined(NO_PERSISTENCE)
 #include "MQTTPersistence.h"
 #endif
@@ -872,6 +874,7 @@ char* MQTTStrdup(const char* src)
 {
 	size_t mlen = strlen(src) + 1;
 	char* temp = malloc(mlen);
+	memset(temp, '\0', mlen);
 	MQTTStrncpy(temp, src, mlen);
 	return temp;
 }

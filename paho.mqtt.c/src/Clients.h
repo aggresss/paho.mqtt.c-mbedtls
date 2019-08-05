@@ -35,9 +35,9 @@
 #include <mbedtls/ssl.h>
 #endif
 
-#include "MQTTClient.h"
 #include "LinkedList.h"
-#include "MQTTClientPersistence.h"
+#include "MQTTProperties.h"
+
 
 
 /**
@@ -126,6 +126,11 @@ typedef struct
 #define DISCONNECTING    -2
 
 /**
+ * getUserPass get MQTT connect user and password when connect. Use on dynamic user and pass scenario
+ */
+typedef int clientGetUserPass(void* context, char * pUser, int nUserCap, char * pPass, int nPassCap);
+
+/**
  * Data related to one client
  */
 typedef struct
@@ -134,6 +139,7 @@ typedef struct
 	const char* username;					/**< MQTT v3.1 user name */
 	int passwordlen;              /**< MQTT password length */
 	const void* password;					/**< MQTT v3.1 binary password */
+	clientGetUserPass * onGetUserPass;    /**< Dynamic username and password */
 	unsigned int cleansession : 1;	/**< MQTT V3 clean session flag */
 	unsigned int cleanstart : 1;		/**< MQTT V5 clean start flag */
 	unsigned int connected : 1;		/**< whether it is currently connected */
@@ -151,7 +157,7 @@ typedef struct
 	List* messageQueue;
 	unsigned int qentry_seqno;
 	void* phandle;  /* the persistence handle */
-	MQTTClient_persistence* persistence; /* a persistence implementation */
+	void* persistence; /* a persistence implementation */
 	void* context; /* calling context - used when calling disconnect_internal */
 	int MQTTVersion;
 	int sessionExpiry; /**< MQTT 5 session expiry */

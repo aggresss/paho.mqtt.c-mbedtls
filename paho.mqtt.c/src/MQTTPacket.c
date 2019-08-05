@@ -27,6 +27,8 @@
 
 #include "MQTTPacket.h"
 #include "Log.h"
+
+#define NO_PERSISTENCE 1
 #if !defined(NO_PERSISTENCE)
 	#include "MQTTPersistence.h"
 #endif

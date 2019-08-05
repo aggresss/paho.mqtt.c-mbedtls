@@ -51,9 +51,8 @@
 	#include <sys/time.h>
 #endif
 
-#if !defined(NO_PERSISTENCE)
-#include "MQTTPersistence.h"
-#endif
+#define NO_PERSISTENCE 1
+
 #include "MQTTAsync.h"
 #include "utf-8.h"
 #include "MQTTProtocol.h"
@@ -73,10 +72,7 @@
 #define URI_WS  "ws://"
 #define URI_WSS "wss://"
 
-#include "VersionInfo.h"
-
-const char *client_timestamp_eye = "MQTTAsyncV3_Timestamp " BUILD_TIMESTAMP;
-const char *client_version_eye = "MQTTAsyncV3_Version " CLIENT_VERSION;
+#define CLIENT_VERSION "1.3.1"
 
 void MQTTAsync_global_init(MQTTAsync_init_options* inits)
 {
@@ -580,10 +576,11 @@ int MQTTAsync_createWithOptions(MQTTAsync* handle, const char* serverURI, const 
 
 	if (!global_initialized)
 	{
-		#if defined(HEAP_H)
-			Heap_initialize();
-		#endif
-		Log_initialize((Log_nameValue*)MQTTAsync_getVersionInfo());
+//		#if defined(HEAP_H)
+//			Heap_initialize();
+//		#endif
+
+		Log_initialize(NULL);
 		bstate->clients = ListInitialize();
 		Socket_outInitialize();
 		Socket_setWriteCompleteCallback(MQTTAsync_writeComplete);
@@ -684,9 +681,9 @@ static void MQTTAsync_terminate(void)
 		ListFree(commands);
 		handles = NULL;
 		WebSocket_terminate();
-		#if defined(HEAP_H)
-			Heap_terminate();
-		#endif
+//		#if defined(HEAP_H)
+//			Heap_terminate();
+//		#endif
 		Log_terminate();
 		global_initialized = 0;
 	}
@@ -3052,7 +3049,10 @@ int MQTTAsync_connect(MQTTAsync handle, const MQTTAsync_connectOptions* options)
 		m->c->password = malloc(m->c->passwordlen);
 		memcpy((void*)m->c->password, options->binarypwd.data, m->c->passwordlen);
 	}
-
+	if (options->onGetUserPass)
+	{
+	    m->c->onGetUserPass = options->onGetUserPass;
+	}
 	m->c->retryInterval = options->retryInterval;
 	m->shouldBeConnected = 1;
 
@@ -4104,48 +4104,6 @@ void MQTTAsync_setTraceLevel(enum MQTTASYNC_TRACE_LEVELS level)
 void MQTTAsync_setTraceCallback(MQTTAsync_traceCallback* callback)
 {
 	Log_setTraceCallback((Log_traceCallback*)callback);
-}
-
-
-MQTTAsync_nameValue* MQTTAsync_getVersionInfo(void)
-{
-	#define MAX_INFO_STRINGS 8
-	static MQTTAsync_nameValue libinfo[MAX_INFO_STRINGS + 1];
-	int i = 0;
-
-	libinfo[i].name = "Product name";
-	libinfo[i++].value = "Eclipse Paho Asynchronous MQTT C Client Library";
-
-	libinfo[i].name = "Version";
-	libinfo[i++].value = CLIENT_VERSION;
-
-	libinfo[i].name = "Build level";
-	libinfo[i++].value = BUILD_TIMESTAMP;
-#if defined(OPENSSL)
-	libinfo[i].name = "OpenSSL version";
-	libinfo[i++].value = SSLeay_version(SSLEAY_VERSION);
-
-	libinfo[i].name = "OpenSSL flags";
-	libinfo[i++].value = SSLeay_version(SSLEAY_CFLAGS);
-
-	libinfo[i].name = "OpenSSL build timestamp";
-	libinfo[i++].value = SSLeay_version(SSLEAY_BUILT_ON);
-
-	libinfo[i].name = "OpenSSL platform";
-	libinfo[i++].value = SSLeay_version(SSLEAY_PLATFORM);
-
-	libinfo[i].name = "OpenSSL directory";
-	libinfo[i++].value = SSLeay_version(SSLEAY_DIR);
-#endif
-#if defined(MBEDTLS)
-	char mbedtlsVersion[30] = {0};
-	mbedtls_version_get_string(mbedtlsVersion);
-    libinfo[i].name = "MbedTLS Version";
-    libinfo[i++].value = mbedtlsVersion;
-#endif
-	libinfo[i].name = NULL;
-	libinfo[i].value = NULL;
-	return libinfo;
 }
 
 

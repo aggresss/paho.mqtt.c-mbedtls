@@ -108,9 +108,7 @@
 #include "MQTTProperties.h"
 #include "MQTTReasonCodes.h"
 #include "MQTTSubscribeOpts.h"
-#if !defined(NO_PERSISTENCE)
-#include "MQTTClientPersistence.h"
-#endif
+
 
 /**
  * Return code: No error. Indicates successful completion of an MQTT client
@@ -998,6 +996,11 @@ typedef struct
 #define MQTTAsync_SSLOptions_initializer { {'M', 'Q', 'T', 'S'}, 4, NULL, NULL, NULL, NULL, NULL, 1, MQTT_SSL_VERSION_DEFAULT, 0, NULL, NULL, NULL, NULL, NULL, 0}
 
 /**
+ * MQTTAsync_GetUserPass get MQTT connect user and password when connect. Use on dynamic user and pass scenario
+ */
+typedef int MQTTAsync_GetUserPass(void* context, char * pUser, int nUserCap, char * pPass, int nPassCap);
+
+/**
  * MQTTAsync_connectOptions defines several settings that control the way the
  * client connects to an MQTT server.  Default values are set in
  * MQTTAsync_connectOptions_initializer.
@@ -1070,6 +1073,11 @@ typedef struct
       * parameter.
       */
 	const char* password;
+    /**
+     * If getUserPass not NULL and  (username or password) has NULL,
+     * will excute getUserPass() to acquire (user or pass) or (user and pass).
+     * */
+	MQTTAsync_GetUserPass* onGetUserPass;
 	/**
       * The time interval in seconds to allow a connect to complete.
       */

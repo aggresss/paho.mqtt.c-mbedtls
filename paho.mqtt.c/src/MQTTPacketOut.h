@@ -21,6 +21,7 @@
 #define MQTTPACKETOUT_H
 
 #include "MQTTPacket.h"
+#include "MQTTSubscribeOpts.h"
 
 int MQTTPacket_send_connect(Clients* client, int MQTTVersion,
 		MQTTProperties* connectProperties, MQTTProperties* willProperties);

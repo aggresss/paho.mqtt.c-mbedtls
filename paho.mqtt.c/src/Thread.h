@@ -16,7 +16,8 @@
  *    Ian Craggs - fix for bug #420851
  *    Ian Craggs - change MacOS semaphore implementation
  *******************************************************************************/
-#include "MQTTClient.h"
+
+#include "MQTTAsync.h"
 
 #if !defined(THREAD_H)
 #define THREAD_H

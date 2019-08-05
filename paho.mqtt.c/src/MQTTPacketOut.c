@@ -36,6 +36,16 @@
 
 #include "Heap.h"
 
+#define CLIENT_MAX_USERPASS_LEN 256
+
+static char* MQTTPacketStrdup(const char* src)
+{
+    size_t mlen = strlen(src) + 1;
+    char* temp = malloc(mlen);
+    memset(temp, '\0', mlen);
+    strncpy(temp, src, mlen);
+    return temp;
+}
 
 /**
  * Send an MQTT CONNECT packet down a socket for V5 or later
@@ -55,6 +65,30 @@ int MQTTPacket_send_connect(Clients* client, int MQTTVersion,
 	FUNC_ENTRY;
 	packet.header.byte = 0;
 	packet.header.bits.type = CONNECT;
+
+	/* modify for dynamic user and password */
+	if (client->onGetUserPass) {
+	    char *tmp_usr = malloc(CLIENT_MAX_USERPASS_LEN);
+	    memset(tmp_usr, '\0', CLIENT_MAX_USERPASS_LEN);
+	    char *tmp_passwd = malloc(CLIENT_MAX_USERPASS_LEN);
+	    memset(tmp_passwd, '\0', CLIENT_MAX_USERPASS_LEN);
+	    client->onGetUserPass(NULL, tmp_usr, CLIENT_MAX_USERPASS_LEN, tmp_passwd, CLIENT_MAX_USERPASS_LEN);
+	    if(strlen(tmp_usr) != 0) {
+	        if (client->username) {
+	            free((char*)client->username);
+	        }
+	        client->username = MQTTPacketStrdup(tmp_usr);
+	    }
+	    free(tmp_usr);
+	    if(strlen(tmp_passwd) != 0) {
+	        if (client->password) {
+	            free((char*)client->password);
+	        }
+            client->password = MQTTPacketStrdup(tmp_passwd);
+            client->passwordlen = strlen(client->password);
+	    }
+	    free(tmp_passwd);
+	}
 
 	len = ((MQTTVersion == MQTTVERSION_3_1) ? 12 : 10) + (int)strlen(client->clientID)+2;
 	if (client->will)
