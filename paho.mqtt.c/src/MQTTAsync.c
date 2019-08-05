@@ -1006,6 +1006,7 @@ static int MQTTAsync_restoreCommands(MQTTAsyncs* client)
 	FUNC_ENTRY;
 	if (c->persistence && (rc = c->persistence->pkeys(c->phandle, &msgkeys, &nkeys)) == 0)
 	{
+	    MQTTAsync_lock_mutex(mqttcommand_mutex);
 		while (rc == 0 && i < nkeys)
 		{
 			char *buffer = NULL;
@@ -1037,6 +1038,7 @@ static int MQTTAsync_restoreCommands(MQTTAsyncs* client)
 				free(msgkeys[i]);
 			i++;
 		}
+		MQTTAsync_unlock_mutex(mqttcommand_mutex);
 		if (msgkeys != NULL)
 			free(msgkeys);
 	}
@@ -1962,6 +1964,7 @@ static void MQTTAsync_removeResponsesAndCommands(MQTTAsyncs* m)
 
 	/* remove commands in the command queue relating to this client */
 	count = 0;
+	MQTTAsync_lock_mutex(mqttcommand_mutex);
 	current = ListNextElement(commands, &next);
 	ListNextElement(commands, &next);
 	while (current)
@@ -2003,6 +2006,7 @@ static void MQTTAsync_removeResponsesAndCommands(MQTTAsyncs* m)
 		current = next;
 		ListNextElement(commands, &next);
 	}
+	MQTTAsync_unlock_mutex(mqttcommand_mutex);
 	Log(TRACE_MINIMUM, -1, "%d commands removed for client %s", count, m->c->clientID);
 	FUNC_EXIT;
 }
@@ -3243,6 +3247,7 @@ static int MQTTAsync_assignMsgId(MQTTAsyncs* m)
 	}
 
 	msgid = (msgid == MAX_MSG_ID) ? 1 : msgid + 1;
+	MQTTAsync_lock_mutex(mqttcommand_mutex);
 	while (ListFindItem(commands, &msgid, cmdMessageIDCompare) ||
 			ListFindItem(m->responses, &msgid, cmdMessageIDCompare))
 	{
@@ -3253,6 +3258,7 @@ static int MQTTAsync_assignMsgId(MQTTAsyncs* m)
 			break;
 		}
 	}
+	MQTTAsync_unlock_mutex(mqttcommand_mutex);
 	if (msgid != 0)
 		m->c->msgID = msgid;
 	if (locked)
@@ -3459,6 +3465,7 @@ static int MQTTAsync_countBufferedMessages(MQTTAsyncs* m)
 	ListElement* current = NULL;
 	int count = 0;
 
+	MQTTAsync_lock_mutex(mqttcommand_mutex);
 	while (ListNextElement(commands, &current))
 	{
 		MQTTAsync_queuedCommand* cmd = (MQTTAsync_queuedCommand*)(current->content);
@@ -3466,6 +3473,7 @@ static int MQTTAsync_countBufferedMessages(MQTTAsyncs* m)
 		if (cmd->client == m && cmd->command.type == PUBLISH)
 			count++;
 	}
+	MQTTAsync_unlock_mutex(mqttcommand_mutex);
 	return count;
 }
 
@@ -3945,6 +3953,7 @@ int MQTTAsync_getPendingTokens(MQTTAsync handle, MQTTAsync_token **tokens)
 	}
 
 	/* calculate the number of pending tokens - commands plus inflight */
+	MQTTAsync_lock_mutex(mqttcommand_mutex);
 	while (ListNextElement(commands, &current))
 	{
 		MQTTAsync_queuedCommand* cmd = (MQTTAsync_queuedCommand*)(current->content);
@@ -3955,6 +3964,7 @@ int MQTTAsync_getPendingTokens(MQTTAsync handle, MQTTAsync_token **tokens)
 	if (m->c)
 		count += m->c->outboundMsgs->count;
 	if (count == 0)
+	    MQTTAsync_unlock_mutex(mqttcommand_mutex);
 		goto exit; /* no tokens to return */
 	*tokens = malloc(sizeof(MQTTAsync_token) * (count + 1));  /* add space for sentinel at end of list */
 
@@ -3968,6 +3978,7 @@ int MQTTAsync_getPendingTokens(MQTTAsync handle, MQTTAsync_token **tokens)
 		if (cmd->client == m)
 			(*tokens)[count++] = cmd->command.token;
 	}
+	MQTTAsync_unlock_mutex(mqttcommand_mutex);
 
 	/* Now add the inflight messages */
 	if (m->c && m->c->outboundMsgs->count > 0)
@@ -4005,13 +4016,16 @@ int MQTTAsync_isComplete(MQTTAsync handle, MQTTAsync_token dt)
 
 	/* First check unprocessed commands */
 	current = NULL;
+	MQTTAsync_lock_mutex(mqttcommand_mutex);
 	while (ListNextElement(commands, &current))
 	{
 		MQTTAsync_queuedCommand* cmd = (MQTTAsync_queuedCommand*)(current->content);
 
 		if (cmd->client == m && cmd->command.token == dt)
+		    MQTTAsync_unlock_mutex(mqttcommand_mutex);
 			goto exit;
 	}
+	MQTTAsync_unlock_mutex(mqttcommand_mutex);
 
 	/* Now check the inflight messages */
 	if (m->c && m->c->outboundMsgs->count > 0)
