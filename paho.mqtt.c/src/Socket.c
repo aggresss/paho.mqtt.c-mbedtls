@@ -395,6 +395,7 @@ char *Socket_getdata(int socket, size_t bytes, size_t* actual_len)
 	}
 exit:
 	FUNC_EXIT;
+	(void)rc;
 	return buf;
 }
 

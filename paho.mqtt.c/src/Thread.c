@@ -100,6 +100,7 @@ mutex_type Thread_create_mutex(void)
 		rc = pthread_mutex_init(mutex, NULL);
 	#endif
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 	return mutex;
 }
 
@@ -164,6 +165,7 @@ void Thread_destroy_mutex(mutex_type mutex)
 		free(mutex);
 	#endif
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 }
 
 
@@ -214,6 +216,7 @@ sem_type Thread_create_sem(void)
 		rc = sem_init(sem, 0, 0);
 	#endif
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 	return sem;
 }
 
@@ -325,6 +328,7 @@ int Thread_post_sem(sem_type sem)
 	#endif
 
  	FUNC_EXIT_RC(rc);
+ 	(void)rc1;
   return rc;
 }
 
@@ -381,6 +385,7 @@ cond_type Thread_create_cond(void)
 	rc = pthread_mutex_init(&condvar->mutex, NULL);
 
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 	return condvar;
 }
 

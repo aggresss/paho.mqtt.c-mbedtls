@@ -2491,6 +2491,7 @@ static void MQTTAsync_stop(void)
 		}
 	}
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 }
 
 

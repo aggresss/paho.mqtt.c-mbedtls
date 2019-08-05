@@ -593,6 +593,7 @@ char *WebSocket_getdata(networkHandles *net, size_t bytes, size_t* actual_len)
 exit:
 	rc = rv != NULL;
 	FUNC_EXIT_RC(rc);
+	(void)rc;
 	return rv;
 }
 
