@@ -1,5 +1,5 @@
 # paho.mqtt.c-mbedtls
-Fork from paho.mqtt.c v1.3.0 support Mbed TLS feature.
+Fork from paho.mqtt.c v1.3.1 support Mbed TLS feature.
 
 
 ## mbedtls configuration
